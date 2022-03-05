@@ -354,6 +354,9 @@ class ShapeAnalysisV2 {
   // Get the leader value with same shape for `val` in  `fusion`.
   Value GetLeaderValueWithSameShapeInFusion(const Operation* fusion,
                                             Value val) const;
+
+ private:
+  ShapeComponentAnalysis shapeComponentAnalysis_;
 };
 #endif
 

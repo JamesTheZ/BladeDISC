@@ -1746,5 +1746,144 @@ void OpListShapeAnalysis::PropagateEquality(
   } while (!converged);
 }
 
+#if 1
+
+Type ShapeAnalysisV2::getRefinedType(Value value) {
+  // TBD.
+}
+
+bool ShapeAnalysisV2::isDimEqual(Value lhs, int64_t lhsDim, Value rhs,
+                                 int64_t rhsDim) {
+  // TODO: this is capable for tensors. To implement value analysis.
+  auto lhs_shape = shapeComponentAnalysis_.GetShapeInfo(lhs);
+  auto rhs_shape = shapeComponentAnalysis_.GetShapeInfo(rhs);
+  if ((!lhs_shape || lhs_shape->size() <= lhsDim) ||
+      (!rhs_shape || rhs_shape->size() << rhsDim)) {
+    return false;
+  }
+
+  return (*lhs_shape)[lhsDim] == (*rhs_shape)[rhsDim];
+}
+
+bool ShapeAnalysisV2::isShapeEqual(Value lhs, Value rhs) {
+  // TODO: this is capable for tensors. To implement value analysis.
+  auto lhs_shape = shapeComponentAnalysis_.GetShapeInfo(lhs);
+  auto rhs_shape = shapeComponentAnalysis_.GetShapeInfo(rhs);
+  if (!lhs_shape || !rhs_shape) {
+    return false;
+  }
+
+  return *lhs_shape == *rhs_shape;
+}
+
+namespace {
+
+bool IsSimpleProduct(
+    AffineExpr expr,
+    llvm::function_ref<void(AffineConstantExpr)> cbkConstantFactor,
+    llvm::function_ref<void(AffineSymbolExpr)> cbkSymbolicFactor) {
+  auto binExpr = expr.dyn_cast<AffineBinaryOpExpr>();
+  if (binExpr && binExpr.getKind() == AffineExprKind::Mul) {
+    return IsSimpleProduct(binExpr.getLHS(), cbkConstantFactor,
+                           cbkSymbolicFactor) &&
+           IsSimpleProduct(binExpr.getRHS(), cbkConstantFactor,
+                           cbkSymbolicFactor);
+  }
+  if (auto symExpr = expr.dyn_cast<AffineSymbolExpr>()) {
+    cbkSymbolicFactor(symExpr);
+    return true;
+  }
+  if (auto constExpr = expr.dyn_cast<AffineConstantExpr>()) {
+    cbkConstantFactor(constExpr);
+    return true;
+  }
+  return false;
+}
+
+bool IsSimpleProduct(const SymbolicExpr& symbolicExpr,
+                     llvm::function_ref<void(int64_t)> cbkConstantFactor,
+                     llvm::function_ref<void(Symbol)> cbkSymbolicFactor) {
+  return IsSimpleProduct(
+      symbolicExpr.expr,
+      [&](AffineConstantExpr cexpr) { cbkConstantFactor(cexpr.getValue()); },
+      [&](AffineSymbolExpr sexpr) {
+        cbkSymbolicFactor(symbolicExpr.symbols[sexpr.getPosition()]);
+      });
+}
+
+bool IsSimpleProduct(const SymbolicExpr& symbolicExpr, int64_t* concreteProduct,
+                     SmallVectorImpl<Symbol>* symbolicFactors) {
+  return IsSimpleProduct(
+      symbolicExpr, [&](int64_t c) { *concreteProduct *= c; },
+      [&](Symbol s) { symbolicFactors->push_back(s); });
+}
+
+}  // namespace
+
+bool ShapeAnalysisV2::isNumElementsEqual(Value lhs, Value rhs) {
+  // TODO: this is capable for tensors. To implement value analysis.
+  auto lhs_shape = shapeComponentAnalysis_.GetShapeInfo(lhs);
+  auto rhs_shape = shapeComponentAnalysis_.GetShapeInfo(rhs);
+  if (!lhs_shape || !rhs_shape) {
+    return false;
+  }
+
+  // Check if they have same shape.
+  if (*lhs_shape == *rhs_shape) {
+    return true;
+  }
+
+  // Extract all product factors of lhs and rhs shape dims and compare.
+  int64_t lhsConcreteProductNumElems = 1;
+  SmallVector<ShapeComponentAnalysis::Symbol> lhsSymbolicFactors;
+  for (const auto& dimSymbolicExpr : *lhs_shape) {
+    if (!IsSimpleProduct(dimSymbolicExpr, &lhsConcreteProductNumElems,
+                         &lhsSymbolicFactors)) {
+      return false;
+    }
+  }
+  int64_t rhsConcreteProductNumElems = 1;
+  SmallVector<ShapeComponentAnalysis::Symbol> rhsSymbolicFactors;
+  for (const auto& dimSymbolicExpr : *rhs_shape) {
+    if (!IsSimpleProduct(dimSymbolicExpr, &rhsConcreteProductNumElems,
+                         &rhsSymbolicFactors)) {
+      return false;
+    }
+  }
+  // Check constant factors.
+  if (lhsConcreteProductNumElems != rhsConcreteProductNumElems) {
+    return false;
+  }
+  // Check non-constant factors.
+  if (lhsSymbolicFactors.size() != rhsSymbolicFactors.size()) {
+    return false;
+  }
+  for (const ShapeComponentAnalysis::Symbol& lhsFactor : lhsSymbolicFactors) {
+    auto* it = llvm::find(rhsSymbolicFactors, lhsFactor);
+    if (it == rhsSymbolicFactors.end()) {
+      return false;
+    }
+    rhsSymbolicFactors.erase(it);
+  }
+
+  return true;
+}
+
+LogicalResult ShapeAnalysisV2::buildTieShapeOps() {
+  // TBD.
+}
+
+bool ShapeAnalysisV2::HasSameNumElements(Value lhs, Value rhs) {
+  return isNumElementsEqual(lhs, rhs);
+}
+
+// Get the leader value with same shape for `val` in  `fusion`.
+Value ShapeAnalysisV2::GetLeaderValueWithSameShapeInFusion(
+    const Operation* fusion, Value val) {
+  // TBD.
+}
+
+#endif
+
 }  // namespace disc_ral
 }  // namespace mlir
