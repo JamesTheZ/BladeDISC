@@ -334,6 +334,29 @@ class OpListShapeAnalysis {
   EquivalenceClasses<ValueWrapper> same_num_elements_impl_;
 };
 
+#if 1
+class ShapeAnalysisV2 {
+ public:
+  Type getRefinedType(Value value);
+
+  bool isDimEqual(Value lhs, int64_t lhsDim, Value rhs, int64_t rhsDim);
+  bool isShapeEqual(Value lhs, Value rhs);
+  bool isNumElementsEqual(Value lhs, Value rhs);
+
+  // Insert tie_shape ops to explicit tie dimension equality in the IR level.
+  // Used for shape simplification pass.
+  LogicalResult buildTieShapeOps();
+
+  // Returns true if `lhs` and `rhs` are supposed to have same number of
+  // elements. This function is deprecated, use `isNumElementsEqual` instead.
+  bool HasSameNumElements(Value lhs, Value rhs);
+
+  // Get the leader value with same shape for `val` in  `fusion`.
+  Value GetLeaderValueWithSameShapeInFusion(const Operation* fusion,
+                                            Value val) const;
+};
+#endif
+
 }  // namespace disc_ral
 }  // namespace mlir
 

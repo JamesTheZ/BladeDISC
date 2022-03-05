@@ -375,6 +375,15 @@ struct ShapeSimplifierPass
       op.getCanonicalizationPatterns(*patterns, context);
   }
 
+#if 1
+  // Patterns to convert ReshapeOp and DynamicReshapeOp to tensor.ExpandShapeOp
+  // or tensor.CollapseShapeOp.
+  void populateReshapeToExpandOrCollapsePatterns(RewritePatternSet&);
+
+  // Update shape value of ops like reshape/from-elemlents to the source value.
+  void populateUpdateShapeValuePatterns(RewritePatternSet&);
+#endif
+
   void populateShapeRefinerPatterns(RewritePatternSet&);
 
   void runOnOperation() override;

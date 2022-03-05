@@ -2398,6 +2398,10 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
   auto parent = &(fusion_op.region().front());
   auto dominant_op = fusion_pattern.getDominantOp();
   auto tile_plan = fusion_pattern.getTilePlan();
+#if 1
+  // Convert memref.ExpandShape/CollapseShape to reshape-op, and update tile
+  // plan.
+#endif
 
   for (auto op : sub_root_ops) {
     if (!isRank2RowReduction(op)) {

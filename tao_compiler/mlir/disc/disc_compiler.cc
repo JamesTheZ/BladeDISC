@@ -206,6 +206,16 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   pm.addNestedPass<FuncOp>(createCSEPass());
   pm.addNestedPass<FuncOp>(createCanonicalizerPass());
 
+  // Place this before shape simplifier to convert reshape to extand/collapse
+  // shape ops.
+  if (gpu_enabled) {
+    pm.addNestedPass<FuncOp>(mhlo::createHloCanonicalizeReductionPass());
+  }
+
+#if 1
+  pm.addNestedPass<FuncOp>(mlir::createReshapeSimplifierPass());
+#endif
+
   // propagate some known shape information.
   pm.addPass(disc_ral::createDiscShapeSimplifierPass());
 
@@ -217,10 +227,6 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
 
   pm.addNestedPass<FuncOp>(disc_ral::createDiscSplitLargeOpsPass());
   pm.addNestedPass<FuncOp>(disc_ral::createDiscDotRewriterPass());
-
-  if (gpu_enabled) {
-    pm.addNestedPass<FuncOp>(mhlo::createHloCanonicalizeReductionPass());
-  }
 
   pm.addPass(disc_ral::createDiscMarkShapeCalcOpPass());
   pm.addPass(disc_ral::createPlacerPass(gpu_enabled));
@@ -281,6 +287,9 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   pm.addNestedPass<FuncOp>(disc_ral::createDiscStdBufferizePass());
   pm.addPass(arith::createArithmeticBufferizePass());
   pm.addNestedPass<FuncOp>(createTensorBufferizePass());
+#if 1
+  // Add a pass to convert tensor.ExpandShape/CollapseShape to memref ones.
+#endif
   pm.addNestedPass<FuncOp>(bufferization::createFinalizingBufferizePass());
   pm.addNestedPass<FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<FuncOp>(createCSEPass());
