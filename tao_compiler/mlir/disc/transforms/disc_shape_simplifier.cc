@@ -359,6 +359,143 @@ class DynamicBroadcastInDimOpSimplifier
   }
 };
 
+#if 1
+
+template <typename OpTy>
+struct TurnReshapeIntoCollapseOrExpandShape : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter& rewriter) const override {
+    ReshapeOp reshape = dyn_cast_or_null<mhlo::ReshapeOp>(op);
+    DynamicReshapeOp dynReshape = dyn_cast_or_null<mhlo::DynamicReshapeOp>(op);
+    if (!reshape && !dynReshape) {
+      return failure();
+    }
+
+    auto input_type = op.operand().getType().dyn_cast<RankedTensorType>();
+    auto output_type = op.getType().dyn_cast<RankedTensorType>();
+    if (!input_type || !output_type ||
+        input_type.getRank() <= output_type.getRank())
+      return failure();
+
+    // Require sucessful shape analysis for operand and shape.
+    ShapeComponentAnalysis shapeComponentAnalysis;
+    auto argShapeInfo = shapeComponentAnalysis.GetShapeInfo(op.operand());
+    if (!argShapeInfo) return failure();
+    auto shapeInfo =
+        (dynReshape != nullptr)
+            ? shapeComponentAnalysis.GetValueInfo(dynReshape.output_shape())
+            : shapeComponentAnalysis.GetShapeInfo(reshape);
+    if (!shapeInfo) return failure();
+
+    auto getL2RCollapseMap = [&](ArrayRef<SymbolicExpr>& lhs,
+                                 ArrayRef<SymbolicExpr>& rhs,
+                                 SmallVector<ReassociationIndices>& result) {
+      result.clear();
+
+      // The process is similar with `TurnDynamicReshapeIntoCollapseShape`.
+      // TODO: support mixed expand and collapse.
+
+      // The next dimension of the operand shape to look at.
+      int i = 0;
+
+      // For each dimension of the target shape, consume the matching dimensions
+      // of the operand shape and build the reassociation map on the fly.
+      SmallVector<ReassociationIndices> result;
+      for (const auto& shapeDim : *rhs) {
+        result.push_back({});
+
+        // Find the concrete/symbolic factors for the current dimension of the
+        // target shape.
+        int64_t remainingConcreteProductShapeDim = 1;
+        SmallVector<Symbol> remainingSymbolicFactorsShapeDim;
+        if (!extractSimpleProductFactor(shapeDim,
+                                        &remainingConcreteProductShapeDim,
+                                        &remainingSymbolicFactorsShapeDim)) {
+          return false;
+        }
+
+        // Consume (and collapse) as many of the operand dimensions as needed to
+        // match the target dimension. This is monotonic.
+        while (remainingConcreteProductShapeDim != 1 ||
+               !remainingSymbolicFactorsShapeDim.empty()) {
+          // Fail if there are no more operand dimensions to consume.
+          if (i >= lhs->size()) {
+            return false;
+          }
+
+          // Find the concrete/symbolic factors for the next dimension of the
+          // operand shape.
+          int64_t concreteProductArgShapeDim = 1;
+          SmallVector<Symbol> symbolicFactorsArgShapeDim;
+          if (!extractSimpleProductFactor((*lhs)[i],
+                                          &concreteProductArgShapeDim,
+                                          &symbolicFactorsArgShapeDim)) {
+            return false;
+          }
+
+          // Eliminate the common concrete factors. Fail if we cannot consume a
+          // concrete factor of the operand shape.
+          if (remainingConcreteProductShapeDim % concreteProductArgShapeDim !=
+              0) {
+            return false;
+          }
+          remainingConcreteProductShapeDim /= concreteProductArgShapeDim;
+
+          // Eliminate the common symbolic factors. Fail if we cannot consume a
+          // symbolic factor of the operand shape.
+          for (const Symbol& symArgShapeDim : symbolicFactorsArgShapeDim) {
+            auto* it =
+                llvm::find(remainingSymbolicFactorsShapeDim, symArgShapeDim);
+            if (it == remainingSymbolicFactorsShapeDim.end()) {
+              return false;
+            }
+            remainingSymbolicFactorsShapeDim.erase(it);
+          }
+
+          // If all the concrete/symbolic factors were consumable, collapse this
+          // dimension (and continue if needed).
+          result.back().push_back(i++);
+        }
+
+        // Consume trailing 1 dimensions.
+        while (i < lhs->size() && (*lhs)[i].isConstant(1)) {
+          result.back().push_back(i++);
+        }
+
+        // This is effectively a shape expansion that we cannot handle yet.
+        if (result.back().empty()) {
+          return false;
+        }
+      }
+
+      // Fail if not all of the operand shape could be consumed.
+      if (i < lhs->size()) {
+        return false;
+      }
+
+      return true;
+    };
+
+    SmallVector<ReassociationIndices> reassociation_map;
+    if (getL2RCollapseMap(shapeInfo, argShapeInfo, reassociation_map)) {
+      // Replace reshape op with its equivalent collapse shape op.
+      rewriter.replaceOpWithNewOp<tensor::CollapseShapeOp>(op, op.operand(),
+                                                           reassociation_map);
+    } else if (getL2RCollapseMap(argShapeInfo, shapeInfo, reassociation_map)) {
+      // Replace reshape op with its equivalent expand shape op.
+      rewriter.replaceOpWithNewOp<tensor::ExpandShapeOp>(
+          op, op.getResult().getType(), op.operand(), reassociation_map);
+    }
+    // TODO: deal with the pattern of mixed collapse and expand, and convert a
+    // reshape-op to an expand-op followed with a collapse-op.
+    return success();
+  }
+};
+
+#endif
+
 struct ShapeSimplifierPass
     : public DiscShapeSimplifierPassBase<ShapeSimplifierPass> {
   ShapeSimplifierPass(const std::string& entry_func_name, bool insert_tie_shape)
@@ -380,8 +517,9 @@ struct ShapeSimplifierPass
   // or tensor.CollapseShapeOp.
   void populateReshapeToExpandOrCollapsePatterns(RewritePatternSet&);
 
-  // Update shape value of ops like reshape/from-elemlents to the source value.
-  void populateUpdateShapeValuePatterns(RewritePatternSet&);
+  // Traceback shape value of ops like reshape/from-elemlents to the source
+  // value.
+  void populateTracebackShapeValuePatterns(RewritePatternSet&);
 #endif
 
   void populateShapeRefinerPatterns(RewritePatternSet&);
@@ -392,6 +530,28 @@ struct ShapeSimplifierPass
 
   LogicalResult applySymbolicShapeOptimization(ShapeAnalysis&, bool&);
 };
+
+#if 1
+
+void ShapeSimplifierPass::populateReshapeToExpandOrCollapsePatterns(
+    RewritePatternSet& patterns) {
+  // clang-format off
+  patterns.insert<
+      TurnReshapeIntoCollapseOrExpandShape<mhlo::DynamicReshapeOp>,
+      TurnReshapeIntoCollapseOrExpandShape<mhlo::ReshapeOp>
+  >(patterns.getContext());
+  // clang-format on
+
+  // Adds canonicalization patterns to the list of patterns.
+  AddCanonicalizationPatterns(patterns.getContext(), &patterns);
+}
+
+void ShapeSimplifierPass::populateReshapeToExpandOrCollapsePatterns(
+    RewritePatternSet& patterns) {
+  // TBD.
+}
+
+#endif
 
 void ShapeSimplifierPass::populateShapeRefinerPatterns(
     RewritePatternSet& patterns) {

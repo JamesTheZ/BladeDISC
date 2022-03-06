@@ -1776,49 +1776,29 @@ bool ShapeAnalysisV2::isShapeEqual(Value lhs, Value rhs) {
   return *lhs_shape == *rhs_shape;
 }
 
-namespace {
-
-bool IsSimpleProduct(
-    AffineExpr expr,
-    llvm::function_ref<void(AffineConstantExpr)> cbkConstantFactor,
-    llvm::function_ref<void(AffineSymbolExpr)> cbkSymbolicFactor) {
-  auto binExpr = expr.dyn_cast<AffineBinaryOpExpr>();
-  if (binExpr && binExpr.getKind() == AffineExprKind::Mul) {
-    return IsSimpleProduct(binExpr.getLHS(), cbkConstantFactor,
-                           cbkSymbolicFactor) &&
-           IsSimpleProduct(binExpr.getRHS(), cbkConstantFactor,
-                           cbkSymbolicFactor);
-  }
-  if (auto symExpr = expr.dyn_cast<AffineSymbolExpr>()) {
-    cbkSymbolicFactor(symExpr);
-    return true;
-  }
-  if (auto constExpr = expr.dyn_cast<AffineConstantExpr>()) {
-    cbkConstantFactor(constExpr);
-    return true;
-  }
-  return false;
+static bool ShapeAnalysisV2::extractSimpleProductFactor(
+    const SymbolicExpr& symbolicExpr, int64_t* constantProduct,
+    SmallVectorImpl<Symbol>* symbolicFactors) {
+  assert(constantProduct != nullptr);
+  *constantProduct = 1;
+  const AffineExpr& expr = symbolicExpr.expr;
+  std::function<bool(AffineExpr)> processExpr;
+  processExpr = [&](AffineExpr expr) {
+    auto binExpr = expr.dyn_cast<AffineBinaryOpExpr>();
+    if (binExpr && binExpr.getKind() == AffineExprKind::Mul) {
+      return processExpr(binExpr.getLHS()) && processExpr(binExpr.getRHS());
+    }
+    if (auto symExpr = expr.dyn_cast<AffineSymbolExpr>()) {
+      symbolicFactors->push_back(symbolicExpr.symbols[symExpr.getPosition()]);
+      return true;
+    }
+    if (auto constExpr = expr.dyn_cast<AffineConstantExpr>()) {
+      *concreteProduct *= constExpr.getValue();
+      return true;
+    }
+    return false;
+  };
 }
-
-bool IsSimpleProduct(const SymbolicExpr& symbolicExpr,
-                     llvm::function_ref<void(int64_t)> cbkConstantFactor,
-                     llvm::function_ref<void(Symbol)> cbkSymbolicFactor) {
-  return IsSimpleProduct(
-      symbolicExpr.expr,
-      [&](AffineConstantExpr cexpr) { cbkConstantFactor(cexpr.getValue()); },
-      [&](AffineSymbolExpr sexpr) {
-        cbkSymbolicFactor(symbolicExpr.symbols[sexpr.getPosition()]);
-      });
-}
-
-bool IsSimpleProduct(const SymbolicExpr& symbolicExpr, int64_t* concreteProduct,
-                     SmallVectorImpl<Symbol>* symbolicFactors) {
-  return IsSimpleProduct(
-      symbolicExpr, [&](int64_t c) { *concreteProduct *= c; },
-      [&](Symbol s) { symbolicFactors->push_back(s); });
-}
-
-}  // namespace
 
 bool ShapeAnalysisV2::isNumElementsEqual(Value lhs, Value rhs) {
   // TODO: this is capable for tensors. To implement value analysis.
@@ -1837,16 +1817,18 @@ bool ShapeAnalysisV2::isNumElementsEqual(Value lhs, Value rhs) {
   int64_t lhsConcreteProductNumElems = 1;
   SmallVector<ShapeComponentAnalysis::Symbol> lhsSymbolicFactors;
   for (const auto& dimSymbolicExpr : *lhs_shape) {
-    if (!IsSimpleProduct(dimSymbolicExpr, &lhsConcreteProductNumElems,
-                         &lhsSymbolicFactors)) {
+    if (!extractSimpleProductFactor(dimSymbolicExpr,
+                                    &lhsConcreteProductNumElems,
+                                    &lhsSymbolicFactors)) {
       return false;
     }
   }
   int64_t rhsConcreteProductNumElems = 1;
   SmallVector<ShapeComponentAnalysis::Symbol> rhsSymbolicFactors;
   for (const auto& dimSymbolicExpr : *rhs_shape) {
-    if (!IsSimpleProduct(dimSymbolicExpr, &rhsConcreteProductNumElems,
-                         &rhsSymbolicFactors)) {
+    if (!extractSimpleProductFactor(dimSymbolicExpr,
+                                    &rhsConcreteProductNumElems,
+                                    &rhsSymbolicFactors)) {
       return false;
     }
   }

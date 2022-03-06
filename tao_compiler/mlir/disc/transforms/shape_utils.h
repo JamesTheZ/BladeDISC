@@ -355,6 +355,10 @@ class ShapeAnalysisV2 {
   Value GetLeaderValueWithSameShapeInFusion(const Operation* fusion,
                                             Value val) const;
 
+  static bool extractSimpleProductFactor(
+      const SymbolicExpr& symbolicExpr, int64_t* constantProduct,
+      SmallVectorImpl<Symbol>* symbolicFactors);
+
  private:
   ShapeComponentAnalysis shapeComponentAnalysis_;
 };
