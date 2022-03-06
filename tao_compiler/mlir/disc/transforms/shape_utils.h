@@ -342,7 +342,7 @@ class ShapeAnalysisV2 {
  public:
   // Represents the analysis request for a specific value. We are either
   // interested in the shape of a value or the value itself.
-  // TODO: rename this structure.
+  // TODO: rename this data structure.
   class ShapeOrValueInfo {
     llvm::PointerIntPair<Value, 1, bool> p;
 
@@ -394,11 +394,17 @@ class ShapeAnalysisV2 {
   // dimensions of a tensor) or value (e.g, the elements of a shape tensor).
   // This can be a constant or an expression over symbols.
   struct SymbolicExpr {
+    // Affine expression.
     SmallVector<Symbol, 1> symbols;
     AffineExpr expr;
-    Symbol sourceSingleton;
 
+    // The source symbol equal to this symbolic expression.
+    Simbol sourceSingleton;
+
+    // If this is a constant int value, store in `value` and return true;
     bool getConstantInt(int64_t* value) const;
+
+    // TODO: implement functions like isOdd, isEven, et al.
 
     llvm::Optional<Symbol> getSourceSingletonSymbol() const {
       if (sourceSingleton.source.value() != nullptr) {
@@ -407,8 +413,6 @@ class ShapeAnalysisV2 {
         return llvm::None;
       }
     }
-
-    // TODO: implement functions like isOdd, isEven, et al.
 
     bool operator==(const SymbolicExpr& rhs) const {
       return expr == expr && symbols == rhs.symbols;
@@ -420,7 +424,6 @@ class ShapeAnalysisV2 {
 
   using SymbolicExprsMap = DenseMap<ShapeOrValueInfo, std::vector<SymbolicExpr>,
                                     ShapeOrValueInfo::DenseMapInfo>;
-  using SymbolicShapeConstraintsMap = DenseMap<int, Symbol>;
 
   Type getRefinedType(Value value);
 
@@ -482,9 +485,15 @@ class ShapeAnalysisV2 {
   void traceBackConstant(Value value);
   void traceBackUnknown(Value value);
 
-  static void updateStaticDims(RankedTensorType ranked_ty,
-                               ArrayRef<SymbolicExpr> fallback,
-                               std::vector<SymbolicExpr>* updateStaticDims);
+  static void updateStaticDims(
+      RankedTensorType ranked_ty,
+      llvm::function_ref<SymbolicExpr(int64_t)> fallback,
+      std::vector<SymbolicExpr>*
+          merged_dims) static void updateStaticDims(RankedTensorType ranked_ty,
+                                                    ArrayRef<SymbolicExpr>
+                                                        fallback,
+                                                    std::vector<SymbolicExpr>*
+                                                        updateStaticDims);
 
   // Return the size of the first dimension. Returns 1 for scalars.
   static int64_t dim0size(Type type);

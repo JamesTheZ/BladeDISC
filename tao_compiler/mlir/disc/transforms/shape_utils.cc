@@ -1968,12 +1968,11 @@ void ShapeAnalysisV2::traceBackShapeOrValueInfo(ShapeOrValueInfo info) {
   }
 }
 
-// TODO: implement `insert` and `lookup`.
-
 void ShapeAnalysisV2::traceBackAssumingShape(Value value) {
   auto assumingOp = op.getDefiningOp<shape::AssumingOp>();
   auto number = op.cast<OpResult>().getResultNumber();
 
+  // TODO: check the following code and deal with sourceSingleton.
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(
       cast<shape::AssumingYieldOp>(
           assumingOp.getDoRegion().back().getTerminator())
@@ -1981,6 +1980,7 @@ void ShapeAnalysisV2::traceBackAssumingShape(Value value) {
 
       auto& dims =
           tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(op));
+
   dims = findSymbolicExprs(ShapeOrValueInfo::getShapeInfoOf(
       cast<shape::AssumingYieldOp>(
           assumingOp.getDoRegion().back().getTerminator())
@@ -1991,6 +1991,7 @@ void ShapeAnalysisV2::traceBackDynamicBroadcastInDimShape(
     mhlo::DynamicBroadcastInDimOp bcast) {
   auto out_dims = bcast.output_dimensions();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getValueInfoOf(out_dims));
+
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(bcast));
   dims = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(out_dims));
@@ -2001,6 +2002,7 @@ void ShapeAnalysisV2::traceBackDynamicReshapeShape(
     mhlo::DynamicReshapeOp reshape) {
   auto out_shape = reshape.output_shape();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getValueInfoOf(out_shape));
+
   auto ranked_ty = reshape.getResult().getType().cast<RankedTensorType>();
   auto shape_dims =
       findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(out_shape));
@@ -2014,6 +2016,7 @@ void ShapeAnalysisV2::traceBackReduceShape(Value value) {
   if (reduceOp.inputs().size() == 1) {
     traceBackShapeOrValueInfo(
         ShapeOrValueInfo::getShapeInfoOf(reduceOp.inputs().back()));
+
     auto& dims =
         tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(value));
     for (const auto& dim : llvm::enumerate(findSymbolicExprs(
@@ -2023,6 +2026,7 @@ void ShapeAnalysisV2::traceBackReduceShape(Value value) {
       }
     }
   } else {
+    // TODO: may need to update `sourceSingleton`.
     traceBackUnknownShape(value);
   }
 }
@@ -2030,6 +2034,7 @@ void ShapeAnalysisV2::traceBackReduceShape(Value value) {
 void ShapeAnalysisV2::traceBackTransposeShape(mhlo::TransposeOp transpose) {
   auto operand = transpose.operand();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(operand));
+
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(transpose));
   auto in = findSymbolicExprs(ShapeOrValueInfo::getShapeInfoOf(operand));
@@ -2042,6 +2047,7 @@ void ShapeAnalysisV2::traceBackTransposeShape(mhlo::TransposeOp transpose) {
 void ShapeAnalysisV2::traceBackSelectShape(mhlo::SelectOp select) {
   auto on_true = select.on_true();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(on_true));
+
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(select));
   // Forward the `on_true` operand, it has the same shape as the output.
@@ -2050,6 +2056,7 @@ void ShapeAnalysisV2::traceBackSelectShape(mhlo::SelectOp select) {
 
 void ShapeAnalysisV2::traceBackBlockArgumentShape(BlockArgument arg) {
   // TBD.
+  // TODO: may need to update `sourceSingleton`.
 }
 
 void ShapeAnalysisV2::traceBackSameOperandsAndResultShape(Value value) {
@@ -2057,6 +2064,7 @@ void ShapeAnalysisV2::traceBackSameOperandsAndResultShape(Value value) {
   // operand for back tracing.
   auto operand = value.getDefiningOp()->getOperand(0);
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(operand));
+
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getShapeInfoOf(value));
   dims = findSymbolicExprs(ShapeOrValueInfo::getShapeInfoOf(operand));
@@ -2076,6 +2084,7 @@ void ShapeAnalysisV2::traceBackUnknownShape(Value value) {
         SymbolicExpr d;
         d.symbols.push_back({ShapeOrValueInfo::getShapeInfoOf(value), i});
         d.expr = id;
+        d.sourceSingleton = (d.symbols)[0];
         return d;
       },
       &dims);
@@ -2084,6 +2093,7 @@ void ShapeAnalysisV2::traceBackUnknownShape(Value value) {
 void ShapeAnalysisV2::traceBackShapeOf(shape::ShapeOfOp shapeof) {
   auto arg = shapeof.getArg();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(operand));
+
   auto ranked_ty = arg.getType().cast<RankedTensorType>();
   auto arg = findSymbolicExprs(ShapeOrValueInfo::getShapeInfoOf(arg));
   auto& dims =
@@ -2094,7 +2104,8 @@ void ShapeAnalysisV2::traceBackShapeOf(shape::ShapeOfOp shapeof) {
 void ShapeAnalysisV2::traceBackNumElements(shape::NumElementsOp num_elements) {
   auto shape = num_elements.getShape();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getValueInfoOf(shape));
-  auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(op.getShape()));
+
+  auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(shape));
 
   // Accumulate product symbolically and concrete where possible.
   int64_t concrete_product = 1;
@@ -2125,6 +2136,8 @@ void ShapeAnalysisV2::traceBackNumElements(shape::NumElementsOp num_elements) {
         getAffineConstantExpr(concrete_product, num_elements.getContext());
     if (dim.expr) {
       dim.expr = cexpr * dim.expr;
+      // TODO: check whether this is correct.
+      dim.sourceSingleton = ShapeOrValueInfo::getValueInfoOf(shape);
     } else {
       dim.expr = cexpr;
     }
@@ -2138,13 +2151,15 @@ void ShapeAnalysisV2::traceBackNumElements(shape::NumElementsOp num_elements) {
 void ShapeAnalysisV2::traceBackDim(tensor::DimOp dim) {
   auto source = dim.source();
   traceBackShapeOrValueInfo(ShapeOrValueInfo::getShapeInfoOf(source));
+
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getValueInfoOf(dim));
   if (auto index = dim.index().getDefiningOp<arith::ConstantOp>()) {
     int64_t i = index.getValue().cast<IntegerAttr>().getInt();
     auto in = findSymbolicExprs(ShapeOrValueInfo::getShapeInfoOf(source));
-    dims.push_back({in[i].symbols, in[i].expr});
+    dims.push_back({in[i].symbols, in[i].expr, in[i].sourceSingleton});
   } else {
+    // TODO: may need to deal with `sourceSingleton`.
     traceBackUnknown(dim);
   }
 }
@@ -2160,7 +2175,7 @@ void ShapeAnalysisV2::traceBackIndexCast(arith::IndexCastOp cast) {
     // This is intentionally not modelling the truncation/zero extension of
     // index_cast. While it's incorrect it doesn't really matter for shape
     // computations.
-    dims.push_back({ins[i].symbols, ins[i].expr});
+    dims.push_back({ins[i].symbols, ins[i].expr, ins[i].sourceSingleton});
   }
 }
 
@@ -2175,7 +2190,7 @@ void ShapeAnalysisV2::traceBackTensorFromElements(
   for (auto operand : fromElements.getOperands()) {
     auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(operand));
     assert(in.size() == 1);
-    dims.push_back({in[0].symbols, in[0].expr});
+    dims.push_back({in[0].symbols, in[0].expr, in[0].sourceSingleton});
   }
 }
 
@@ -2191,8 +2206,9 @@ void ShapeAnalysisV2::traceBackTensorExtract(tensor::ExtractOp extract) {
     int64_t i = index.getValue().cast<IntegerAttr>().getInt();
     // We asssume this is in bounds.
     auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(tensor));
-    dims.push_back({in[i].symbols, in[i].expr});
+    dims.push_back({in[i].symbols, in[i].expr, in[i].sourceSingleton});
   } else {
+    // TODO: may need to deal with `sourceSingleton`.
     traceBackUnknown(extract);
   }
 }
@@ -2222,6 +2238,7 @@ void ShapeAnalysisV2::traceBackBinOp(Operation op) {
     dim.expr = combiner(
         lhs[i].expr,
         rhs[i].expr.shiftSymbols(rhs[i].symbols.size(), lhs[i].symbols.size()));
+    dim.sourceSingleton = ShapeOrValueInfo::getValueInfoOf(op);
   }
 }
 
@@ -2240,7 +2257,7 @@ void ShapeAnalysisV2::traceBackConcatenate(mhlo::ConcatenateOp concat) {
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getValueInfoOf(concat));
   for (auto operand : concat.getOperands()) {
     auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(operand));
-    dims.push_back({in[0].symbols, in[0].expr});
+    dims.push_back({in[0].symbols, in[0].expr, in[i].sourceSingleton});
   }
 }
 
@@ -2254,7 +2271,7 @@ void ShapeAnalysisV2::traceBackReshape(mhlo::ReshapeOp reshape) {
   }
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getValueInfoOf(reshape));
-  dims.push_back({in[0].symbols, in[0].expr});
+  dims.push_back({in[0].symbols, in[0].expr, in[0].sourceSingleton});
 }
 
 void ShapeAnalysisV2::traceBackSlice(mhlo::SliceOp slice) {
@@ -2273,7 +2290,7 @@ void ShapeAnalysisV2::traceBackSlice(mhlo::SliceOp slice) {
   if (i >= in.size()) {  // Bounds check.
     return traceBackUnknown(slice);
   }
-  dims.push_back({in[i].symbols, in[i].expr});
+  dims.push_back({in[i].symbols, in[i].expr, in[i].sourceSingleton});
 }
 
 void ShapeAnalysisV2::traceBackConstant(Value value) {
@@ -2295,6 +2312,7 @@ void ShapeAnalysisV2::traceBackConstant(Value value) {
     auto& dim = dims.back();
     dim.expr = getAffineConstantExpr(intAttr.getInt(), value.getContext());
   } else {
+    // TODO: may need to update `sourceSingleton`.
     traceBackUnknown(value);
   }
 }
@@ -2308,22 +2326,31 @@ void ShapeAnalysisV2::traceBackUnknown(Value value) {
     auto& dim = dims.back();
     dim.symbols.push_back({ShapeOrValueInfo::getValueInfoOf(value), i});
     dim.expr = id;
+    dim.sourceSingleton = (dim.symbols)[0];
   }
 }
 
 static void ShapeAnalysisV2::updateStaticDims(
-    RankedTensorType ranked_ty, ArrayRef<SymbolicExpr> fallback,
+    RankedTensorType ranked_ty,
+    llvm::function_ref<SymbolicExpr(int64_t)> fallback,
     std::vector<SymbolicExpr>* merged_dims) {
   auto* ctx = ranked_ty.getContext();
   for (int64_t i = 0, e = ranked_ty.getRank(); i != e; ++i) {
     if (ranked_ty.isDynamicDim(i)) {
-      merged_dims->push_back(fallback[i]);
+      merged_dims->push_back(fallback(i));
     } else {
       merged_dims->emplace_back();
       auto& d = merged_dims->back();
       d.expr = getAffineConstantExpr(ranked_ty.getDimSize(i), ctx);
     }
   }
+}
+
+static void ShapeAnalysisV2::updateStaticDims(
+    RankedTensorType ranked_ty, ArrayRef<SymbolicExpr> fallback,
+    std::vector<SymbolicExpr>* merged_dims) {
+  return ShapeAnalysisV2::updateStaticDims(
+      ranked_ty, [&](int64_t i) { return fallback[i]; }, merged_dims);
 }
 
 static int64_t ShapeAnalysisV2::dim0size(Type type) {
