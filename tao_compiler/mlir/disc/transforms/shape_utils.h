@@ -335,8 +335,93 @@ class OpListShapeAnalysis {
 };
 
 #if 1
+// Some of the implementation is similar with `ShapeComponentAnalysis'. As
+// `ShapeComponentAnalysis` lacks of some functions we require, we design the
+// new data structure.
 class ShapeAnalysisV2 {
  public:
+  // Represents the analysis request for a specific value. We are either
+  // interested in the shape of a value or the value itself.
+  // TODO: rename this structure.
+  class ShapeOrValueInfo {
+    llvm::PointerIntPair<Value, 1, bool> p;
+
+    explicit ShapeOrValueInfo(decltype(p) p) : p(p) {}
+    ShapeOrValueInfo(Value v, bool isValueInfo) : p(v, isValueInfo) {}
+
+   public:
+    static ShapeOrValueInfo getShapeInfoOf(Value v) { return {v, false}; }
+    static ShapeOrValueInfo getValueInfoOf(Value v) { return {v, true}; }
+    Value value() const { return p.getPointer(); }
+    bool isValueInfo() const { return p.getInt(); }
+    bool isShapeInfo() const { return !isValueInfo(); }
+
+    bool operator==(ShapeOrValueInfo rhs) const { return p == rhs.p; }
+    bool operator!=(ShapeOrValueInfo rhs) const { return !(*this == rhs); }
+
+    // Forward p's DenseMapInfo.
+    struct DenseMapInfo {
+      using PairInfo = llvm::DenseMapInfo<decltype(p)>;
+      static inline ShapeOrValueInfo getEmptyKey() {
+        return ShapeOrValueInfo(PairInfo::getEmptyKey());
+      }
+      static inline ShapeOrValueInfo getTombstoneKey() {
+        return ShapeOrValueInfo(PairInfo::getTombstoneKey());
+      }
+      static unsigned getHashValue(ShapeOrValueInfo val) {
+        return PairInfo::getHashValue(val.p);
+      }
+      static bool isEqual(ShapeOrValueInfo lhs, ShapeOrValueInfo rhs) {
+        return lhs == rhs;
+      }
+    };
+  };
+
+  // Symbolically represents one component of a shape (e.g., the dimensions of a
+  // tensor) or value (e.g, the elements of a shape tensor). This is used to tie
+  // symbolic expressions to components of shapes or values.
+  struct Symbol {
+    ShapeOrValueInfo source;
+    size_t index;
+
+    bool operator==(const Symbol& rhs) const {
+      return source == rhs.source && index == rhs.index;
+    }
+    bool operator!=(const Symbol& rhs) const { return !(*this == rhs); }
+  };
+
+  // Represents the analysis result for a one component of a shape (e.g., the
+  // dimensions of a tensor) or value (e.g, the elements of a shape tensor).
+  // This can be a constant or an expression over symbols.
+  struct SymbolicExpr {
+    SmallVector<Symbol, 1> symbols;
+    AffineExpr expr;
+    Symbol sourceSingleton;
+
+    bool getConstantInt(int64_t* value) const;
+
+    llvm::Optional<Symbol> getSourceSingletonSymbol() const {
+      if (sourceSingleton.source.value() != nullptr) {
+        return sourceSingleton;
+      } else {
+        return llvm::None;
+      }
+    }
+
+    // TODO: implement functions like isOdd, isEven, et al.
+
+    bool operator==(const SymbolicExpr& rhs) const {
+      return expr == expr && symbols == rhs.symbols;
+    }
+    bool operator!=(const SymbolicExpr& rhs) const { return !(*this == rhs); }
+
+    void dump(llvm::raw_ostream& os = llvm::outs()) const;
+  };
+
+  using SymbolicExprsMap = DenseMap<ShapeOrValueInfo, std::vector<SymbolicExpr>,
+                                    ShapeOrValueInfo::DenseMapInfo>;
+  using SymbolicShapeConstraintsMap = DenseMap<int, Symbol>;
+
   Type getRefinedType(Value value);
 
   bool isDimEqual(Value lhs, int64_t lhsDim, Value rhs, int64_t rhsDim);
@@ -359,8 +444,64 @@ class ShapeAnalysisV2 {
       const SymbolicExpr& symbolicExpr, int64_t* constantProduct,
       SmallVectorImpl<Symbol>* symbolicFactors);
 
+  // Return the computed components for the shape of a value, e.g., the
+  // dimensions of a tensor.
+  Optional<ArrayRef<SymbolicExpr>> GetShapeInfo(Value value);
+  // Return the computed components for the value of a value, e.g, the elements
+  // of a shape tensor.
+  Optional<ArrayRef<SymbolicExpr>> GetValueInfo(Value shape);
+
+  // Clear analysis data structures.
+  void reset();
+
  private:
-  ShapeComponentAnalysis shapeComponentAnalysis_;
+  void traceBackShapeOrValueInfo(ShapeOrValueInfo v);
+
+  // Handle values.
+  void traceBackAssumingShape(Value value);
+  void traceBackDynamicBroadcastInDimShape(mhlo::DynamicBroadcastInDimOp bcast);
+  void traceBackDynamicReshapeShape(mhlo::DynamicReshapeOp reshape);
+  void traceBackReduceShape(Value value);
+  void traceBackTransposeShape(mhlo::TransposeOp transpose);
+  void traceBackSelectShape(mhlo::SelectOp select);
+  void traceBackBlockArgumentShape(BlockArgument arg);
+  void traceBackSameOperandsAndResultShape(Value value);
+  void traceBackUnknownShape(Value value);
+
+  // Handle shapes.
+  void traceBackShapeOf(shape::ShapeOfOp shapeof);
+  void traceBackNumElements(shape::NumElementsOp num_elements);
+  void traceBackDim(tensor::DimOp dim);
+  void traceBackIndexCast(arith::IndexCastOp cast);
+  void traceBackTensorFromElements(tensor::FromElementsOp fromElements);
+  void traceBackTensorExtract(tensor::ExtractOp extract);
+  void traceBackBinOp(Operation op);
+  void traceBackConcatenate(mhlo::ConcatenateOp concat);
+  void traceBackReshape(mhlo::ReshapeOp reshape);
+  void traceBackSlice(mhlo::SliceOp slice);
+  void traceBackConstant(Value value);
+  void traceBackUnknown(Value value);
+
+  static void updateStaticDims(RankedTensorType ranked_ty,
+                               ArrayRef<SymbolicExpr> fallback,
+                               std::vector<SymbolicExpr>* updateStaticDims);
+
+  // Return the size of the first dimension. Returns 1 for scalars.
+  static int64_t dim0size(Type type);
+
+  // Retrieves the existing information from the cache.
+  ArrayRef<SymbolicExpr> findSymbolicExprs(ShapeOrValueInfo info);
+
+  // Inserts a new entry into the cache and returns a reference to its result
+  // components.
+  std::vector<SymbolicExpr>& tryEmplaceInSymbolicExprsMap(
+      ShapeOrValueInfo info);
+
+ private:
+  // Mapping from the analysis requests to the results, i.e. to an array of
+  // symbolic expressions. This is essentially a cache for all the results of
+  // this analysis.
+  SymbolicExprsMap symbolicExprsMap_;
 };
 #endif
 

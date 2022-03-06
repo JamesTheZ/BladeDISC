@@ -494,6 +494,39 @@ struct TurnReshapeIntoCollapseOrExpandShape : public OpRewritePattern<OpTy> {
   }
 };
 
+template <typename OpTy>
+struct ReplaceShapeValueWithSourceTraceBack : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter& rewriter) const override {
+    if (auto reshape = dyn_cast_or_null<mhlo::DynamicReshapeOp>(op)) {
+      return replaceShapeWithSourceValue(reshape);
+    } else if (auto bcast = dyn_cast_or_null<mhlo::DynamicBroadcastInDim>(op)) {
+      return replaceShapeWithSourceValue(bcast);
+    }
+
+    return failure();
+  }
+
+ private:
+  LogicalResult replaceShapeWithSourceValue(mhlo::DynamicReshapeOp op);
+  LogicalResult replaceShapeWithSourceValue(mhlo::DynamicBroadcastInDim op);
+};
+
+LogicalResult ReplaceShapeValueWithSourceTraceBack::replaceShapeWithSourceValue(
+    mhlo::DynamicReshapeOp op) {
+  auto outputShape = op.output_shape();
+  ShapeComponentAnalysis shapeComponentAnalysis;
+  auto shapeInfo = shapeComponentAnalysis.GetValueInfo(op.output_shape());
+}
+
+LogicalResult ReplaceShapeValueWithSourceTraceBack::replaceShapeWithSourceValue(
+    mhlo::DynamicBroadcastInDim op) {
+  auto output_dimensions = op.output_dimensions();
+  // TBD.
+}
+
 #endif
 
 struct ShapeSimplifierPass
@@ -517,9 +550,9 @@ struct ShapeSimplifierPass
   // or tensor.CollapseShapeOp.
   void populateReshapeToExpandOrCollapsePatterns(RewritePatternSet&);
 
-  // Traceback shape value of ops like reshape/from-elemlents to the source
+  // Trace back shape value of ops like reshape/from-elemlents to the source
   // value.
-  void populateTracebackShapeValuePatterns(RewritePatternSet&);
+  void populateTraceBackShapeValuePatterns(RewritePatternSet&);
 #endif
 
   void populateShapeRefinerPatterns(RewritePatternSet&);
@@ -549,6 +582,16 @@ void ShapeSimplifierPass::populateReshapeToExpandOrCollapsePatterns(
 void ShapeSimplifierPass::populateReshapeToExpandOrCollapsePatterns(
     RewritePatternSet& patterns) {
   // TBD.
+  // Ops to deal with:
+  //   mhlo::DynamicBroadcastInDimOp
+  //   mhlo::DynamicReshapeOp
+  //   shape::ShapeOfOp
+  //   shape::NumElementsOp
+  //   tensor::DimOp
+  //   tensor::FromElementsOp
+  //   tensor::ExtractOp
+  //   mhlo::ConcatenateOp
+  //   mhlo::SliceOp
 }
 
 #endif
