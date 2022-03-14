@@ -1752,8 +1752,6 @@ void OpListShapeAnalysis::PropagateEquality(
   } while (!converged);
 }
 
-#if 1
-
 Type ShapeAnalysisV2::getRefinedType(Value value) {
   // TBD.
 }
@@ -1888,6 +1886,132 @@ Optional<ArrayRef<SymbolicExpr>> ShapeAnalysisV2::GetValueInfo(Value shape) {
 }
 
 void ShapeAnalysisV2::reset() { symbolicExprsMap_.clear(); }
+
+bool ShapeAnalysisV2::isKnownPositiveSymbol(
+    const ShapeAnalysisV2::Symbol& symbol) const {
+  // If the symbol is coming from a shape it can't be negative. Also allow
+  // results of shape_of, compute_reshape_shape, and num_elements. This is
+  // correct, not complete.
+  if (symbol.source.isShapeInfo()) {
+    return true;
+  }
+  Operation* op = symbol.source.value().getDefiningOp();
+  if (op == nullptr) {
+    return false;
+  }
+  // TODO: double-check shape.broadcast. The output elements should be positive.
+  // If the semantics allow negative value, chech whether the broadcast is a
+  // producer of mhlo.bcast/reshape op.
+  return llvm::isa<shape::ShapeOfOp, mhlo::ComputeReshapeShapeOp,
+                   shape::NumElementsOp, shape::BroadcastOp>(op);
+}
+
+bool ShapeAnalysisV2::isKnownNotZeroSymbol(const Symbol& symbol) const {
+  Operation* op = symbol.source.value().getDefiningOp();
+  if (op == nullptr) {
+    return false;
+  }
+  // As for num-elements-op, We assume there will be no empty tensor.
+  return llvm::isa<shape::ShapeOfOp, mhlo::ComputeReshapeShapeOp, tensor::DimOp,
+                   shape::NumElementsOp, shape::BroadcastOp>(op);
+}
+
+ShapeAnalysisV2::AffineExprState ShapeAnalysisV2::getAffineExprState(
+    const AffineExpr& expr,
+    const SmallVectorImpl<ShapeAnalysisV2::Symbol>& symbols) const {
+  // TODO: make use of simplifyAffineExpr. Carefully deal with expr.getPosition
+  // in symbols.
+  AffineExprState state;
+  if (auto symExpr = expr.dyn_cast<AffineSymbolExpr>()) {
+    if (isKnownPositiveSymbol(symbols[symExpr.getPosition()])) {
+      state.knownPositive = true;
+      state.knownZero = false;
+    } else if (isKnownNotZeroSymbol(symbols[symExpr.getPosition()])) {
+      state.knownZero = false;
+    }
+  } else if (auto constExpr = expr.dyn_cast<AffineConstantExpr>()) {
+    state.knownPositive = constExpr.getValue() > 0;
+    state.knownNegative = constExpr.getValue() < 0;
+    state.knownZero = constExpr.getValue() == 0;
+  } else if (auto bexpr = expr.dyn_cast<AffineBinaryOpExpr>()) {
+    auto lhsState = getAffineExprState(bexpr.getLHS(), symbols);
+    auto rhsState = getAffineExprState(bexpr.getRHS(), symbols);
+    bool knownSameSign = false;
+    knownSameSign |= lhsState.isKnownPositive() && rhsState.isKnownPositive();
+    knownSameSign |= lhsState.isKnownNegative() && rhsState.isKnownNegative();
+    bool knownDiffSign = false;
+    knownSameSign |= lhsState.isKnownPositive() && rhsState.isKnownNegative();
+    knownSameSign |= lhsState.isKnownNegative() && rhsState.isKnownPositive();
+    bool knownSameNotSign = false;
+    knownSameNotSign |=
+        lhsState.isKnownNotPositive() && rhsState.isKnownNotPositive();
+    knownSameNotSign |=
+        lhsState.isKnownNotNegative() && rhsState.isKnownNotNegative();
+    switch (bexpr.getKind()) {
+      case AffineExprKind::Mul:
+      case AffineExprKind::FloorDiv:
+      case AffineExprKind::CeilDiv: {
+        if (knownSameSign) {
+          state.knownPositive = true;
+        }
+        if (knownDiffSign) {
+          state.knownNegative = true;
+        }
+        if (knownSameNotSign) {
+          state.knownNotNegative = true;
+        }
+        if (lhsState.isKnownZero() || (bexpr.getKind() == AffineExprKind::Mul &&
+                                       rhsState.isKnownZero())) {
+          state.knownZero = true;
+        }
+      } break;
+      case AffineExprKind::Add: {
+        AffineExprState effectiveState = lhsState;
+        if (lhsState.isKnownZero()) {
+          effectiveState = rhsState;
+        } else if (rhsState.isKnownZero()) {
+          effectiveState = lhsState;
+        }
+        if (knownSameSign) {
+          if (effectiveState.isKnownPositive()) {
+            state.knownPositive = true;
+          } else if (effectiveState.isKnownNegative()) {
+            state.knownNegative = true;
+          }
+        }
+        if (knownSameNotSign) {
+          if (effectiveState.isKnownNotPositive()) {
+            state.knownNotPositive = true;
+          } else if (effectiveState.isKnownNotNegative()) {
+            state.knownNotNegative = true;
+          }
+        }
+        if (lhsState.isKnownZero() || rhsState.isKnownZero()) {
+          state = effectiveState;
+        }
+      } break;
+      case AffineExprKind::Mod: {
+        // Note that rhs of Mod is always positive.
+        if (lhsState.isKnownZero()) {
+          state.knownZero = true;
+        }
+        if (lhsState.isKnownNotNegative()) {
+          state.knownNotNegative = true;
+        }
+        if (lhsState.isKnownNotPositive()) {
+          state.knownNotPositive = true;
+        }
+      } break;
+    }
+  }
+
+  return state;
+}
+
+bool ShapeAnalysisV2::isSpecificConstant(
+    const ShapeAnalysisV2::SymbolicExpr& symbolExpr, int64_t value) const {
+  return symbolExpr.isConstant(value);
+}
 
 void ShapeAnalysisV2::traceBackShapeOrValueInfo(ShapeOrValueInfo info) {
   // Already visited.
@@ -2201,8 +2325,12 @@ void ShapeAnalysisV2::traceBackTensorExtract(tensor::ExtractOp extract) {
   auto& dims =
       tryEmplaceInSymbolicExprsMap(ShapeOrValueInfo::getValueInfoOf(extract));
   assert(extract.indices().size() == 1);
-  if (auto index =
-          extract.indices().front().getDefiningOp<arith::ConstantOp>()) {
+  if (extract.indices().empty()) {
+    // Extract from a single-element tensor.
+    auto in = lookup(ShapeOrValueInfo::getValueInfoOf(extract.tensor()));
+    dims.push_back({in[0].symbols, in[0].expr});
+  } else if (auto index =
+                 extract.indices().front().getDefiningOp<arith::ConstantOp>()) {
     int64_t i = index.getValue().cast<IntegerAttr>().getInt();
     // We asssume this is in bounds.
     auto in = findSymbolicExprs(ShapeOrValueInfo::getValueInfoOf(tensor));
@@ -2373,8 +2501,6 @@ std::vector<SymbolicExpr>& ShapeAnalysisV2::tryEmplaceInSymbolicExprsMap(
   assert(i.second && "op already processed?");
   return i.first->second;
 }
-
-#endif
 
 }  // namespace disc_ral
 }  // namespace mlir

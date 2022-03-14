@@ -422,9 +422,33 @@ class ShapeAnalysisV2 {
     void dump(llvm::raw_ostream& os = llvm::outs()) const;
   };
 
+  struct AffineExprState {
+    llvm::Optional<bool> knownZero;
+    llvm::Optional<bool> knownNegative;
+    llvm::Optional<bool> knownPositive;
+    llvm::Optional<bool> knownNotNegative;
+    llvm::Optional<bool> knownNotPositive;
+    bool isKnownZero() { return knownZero.hasValue() && *knownZero; }
+    bool isKnownNegative() {
+      return knownNegative.hasValue() && *knownNegative;
+    }
+    bool isKnownPositive() {
+      return knownPositive.hasValue() && *knownPositive;
+    }
+    bool isKnownNotNegative() {
+      return isKnownPositive() || isKnownZero() ||
+             knownNotNegative.hasValue() && *knownNotNegative;
+    }
+    bool isKnownNotPositive() {
+      return isKnownNegative() || isKnownZero() ||
+             knownNotPositive.hasValue() && *knownNotPositive;
+    }
+  };
+
   using SymbolicExprsMap = DenseMap<ShapeOrValueInfo, std::vector<SymbolicExpr>,
                                     ShapeOrValueInfo::DenseMapInfo>;
 
+ public:
   Type getRefinedType(Value value);
 
   bool isDimEqual(Value lhs, int64_t lhsDim, Value rhs, int64_t rhsDim);
@@ -456,6 +480,12 @@ class ShapeAnalysisV2 {
 
   // Clear analysis data structures.
   void reset();
+
+  AffineExprState getAffineExprState(
+      const AffineExpr& expr, const SmallVectorImpl<Symbol>& symbols) const;
+  bool isKnownPositiveSymbol(const Symbol& symbol) const;
+  bool isKnownNotZeroSymbol(const Symbol& symbol) const;
+  bool isSpecificConstant(const SymbolicExpr& symbolExpr, int64_t value) const;
 
  private:
   void traceBackShapeOrValueInfo(ShapeOrValueInfo v);
