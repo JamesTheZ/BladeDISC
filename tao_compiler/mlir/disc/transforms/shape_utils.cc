@@ -2502,5 +2502,17 @@ std::vector<SymbolicExpr>& ShapeAnalysisV2::tryEmplaceInSymbolicExprsMap(
   return i.first->second;
 }
 
+std::size_t ShapeAnalysisV2(const ShapeAnalysisV2::SymbolicExpr& symbolicExpr) {
+  auto result = mlir::hash_value(symbolicExpr.expr);
+  for (const auto& symbol : symbolicExpr.symbols) {
+    auto source_hash =
+        llvm::hash_combine(mlir::hash_value(symbol.source.value()),
+                           llvm::hash_value(symbol.source.isValueInfo()));
+    result = llvm::hash_combine(result, source_hash);
+    result = llvm::hash_combine(result, llvm::hash_value(symbol.index));
+  }
+  return result;
+}
+
 }  // namespace disc_ral
 }  // namespace mlir
