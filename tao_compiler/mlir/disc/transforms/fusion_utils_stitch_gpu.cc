@@ -17,6 +17,12 @@ namespace disc_ral {
 ////////////////////// Stitch GPU FusionStrategy Implemenation /////////
 ////////////////////////////////////////////////////////////////////////
 
+bool isGpuExpensiveElementwise(Operation* op) {
+  return isa<mhlo::CosOp, mhlo::SinOp, mhlo::Atan2Op, mhlo::ExpOp,
+             mhlo::Expm1Op, mhlo::LogOp, mhlo::Log1pOp, mhlo::PowerOp,
+             mhlo::RsqrtOp, mhlo::CbrtOp, mhlo::TanhOp>(op);
+}
+
 bool findValidReductionOps(FusionPatternBase& target,
                            SmallVectorImpl<Operation*>& row_reductions,
                            SmallVectorImpl<Operation*>& col_reductions) {
@@ -635,11 +641,11 @@ bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
   DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
   tile_plan.clear();
 
-  // Check constraint: all sub-roots have equivalent tiled dims and equivalent
-  // non-tiled dims. As all sub-roots are rank-2 row-reductions, the checking is
-  // simplified to check shape equality.
+  // Check constraint: all reduce ops have equivalent tiled dims and equivalent
+  // non-tiled dims, which is simplified to checking shape equality.
   const auto& subroots = fusion_pattern.getSubRootOps();
   const auto& dominant_op = fusion_pattern.getDominantOp();
+  assert(isRank2RowReduction(dominant_op));
   if (!llvm::all_of(subroots, [&](Operation* op) {
         if (op == dominant_op) {
           return true;
@@ -804,6 +810,26 @@ bool StitchGpuFusionStrategy::backtraceTileAndCover(
   return propagateO2I(value, cover);
 }
 
+void StitchGpuFusionStrategy::matchExpensiveElemwiseAsSubroots(
+    ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern) {
+  DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
+  for (auto op : fusion_pattern.getOpList()) {
+    if (!isGpuExpensiveElementwise(op)) {
+      continue;
+    }
+    Value result = cast<lmhlo::LmhloOp>(op).getResultBuffer();
+    auto tile = tile_plan.find(result);
+    if (tile == tile_plan.end()) {
+      continue;
+    }
+    if (tile->second.tileSizes.empty()) {
+      // This means there will be only one element in every tile.
+      // TODO: make sure that num-elememts of op is the same with dominant op.
+      fusion_pattern.addSubRootOp(op);
+    }
+  }
+}
+
 bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
                                                 FusionPattern& fusion_pattern) {
   const auto& results = fusion_pattern.getResults();
@@ -849,6 +875,9 @@ bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
       return false;
     }
   }
+
+  matchExpensiveElemwiseAsSubroots(shapeAnalysis, fusion_pattern);
+  // TODO: alter codegen of the newly matched subroot.
 
   // TODO: global memory buffer for intermeidate common operands.
   // TODO: add speculation hint here.
