@@ -328,8 +328,6 @@ class FusionPattern : public FusionPatternBase {
     sub_root_ops_ = sub_root_ops;
   }
 
-  void addSubRootOp(Operation* op) { sub_root_ops_.push_back(op); }
-
   struct SkeletonGroup {
     Operation* skeleton;
     SmallVector<Operation*> root_member_list;
@@ -645,6 +643,9 @@ class StitchGpuFusionStrategy : public FusionStrategy {
   bool tileXroots(ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern);
   bool backtraceTileAndCover(ShapeAnalysis& shapeAnalysis,
                              FusionPattern& fusion_pattern, Value value);
+  void matchExpensiveElemwiseAsSubroot(ShapeAnalysis& shapeAnalysis,
+                                       FusionPattern& fusion_pattern);
+  void matchMultiUsedOpAsRegularXroot(FusionPattern& fusion_pattern);
 };
 
 }  // namespace disc_ral

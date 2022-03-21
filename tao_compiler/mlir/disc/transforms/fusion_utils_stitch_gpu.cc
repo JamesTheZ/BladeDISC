@@ -810,9 +810,10 @@ bool StitchGpuFusionStrategy::backtraceTileAndCover(
   return propagateO2I(value, cover);
 }
 
-void StitchGpuFusionStrategy::matchExpensiveElemwiseAsSubroots(
+void StitchGpuFusionStrategy::matchExpensiveElemwiseAsSubroot(
     ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern) {
-  DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
+  const DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
+  auto subroots = fusion_pattern.getSubRootOps();
   for (auto op : fusion_pattern.getOpList()) {
     if (!isGpuExpensiveElementwise(op)) {
       continue;
@@ -825,7 +826,55 @@ void StitchGpuFusionStrategy::matchExpensiveElemwiseAsSubroots(
     if (tile->second.tileSizes.empty()) {
       // This means there will be only one element in every tile.
       // TODO: make sure that num-elememts of op is the same with dominant op.
-      fusion_pattern.addSubRootOp(op);
+      subroots.push_back(op);
+    }
+  }
+}
+
+void StitchGpuFusionStrategy::matchMultiUsedOpAsRegularXroot(
+    FusionPattern& fusion_pattern) {
+  const auto& subroots = fusion_pattern.getSubRootOps();
+  DenseSet<Operation*> subroot_set(subroots.begin(), subroots.end());
+  const auto& op_list = fusion_pattern.getOpList();
+  DenseSet<Operation*> op_set(op_list.begin(), op_list.end());
+  const auto& roots = fusion_pattern.getRootOps();
+  DenseSet<Operation*> root_set(roots.begin(), roots.end());
+  const DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
+
+  std::function<void(Operation*, DenseSet<Operation*>&)> getConsumingSubroots;
+  auto getConsumingSubroots = [&](Operation* op,
+                                  DenseSet<Operation*>& consuming_subroots) {
+    int num_input_operand = op->getNumOperands() - getNumResultOperands(op);
+    for (Value v : op->getOperands().drop_front(num_input_operand)) {
+      for (Operation* user : getValueUsers(v)) {
+        if (user == op) {
+          continue;
+        }
+        if (op_set.contains(user)) {
+          if (subroot_set.contains(user)) {
+            consuming_subroots.insert(user);
+          } else {
+            getConsumingSubroots(user, consuming_subroots);
+          }
+        }
+      }
+    }
+  };
+
+  auto& regular_xroots = fusion_pattern.getRegularXroots();
+  for (auto op : fusion_pattern.getOpList()) {
+    if (isa<lmhlo::ConstOp>(op) || root_set.contains(op)) {
+      continue;
+    }
+    Value result = cast<lmhlo::LmhloOp>(op).getResultBuffer();
+    auto tile = tile_plan.find(result);
+    if (tile == tile_plan.end()) {
+      continue;
+    }
+    DenseSet<Operation*> consuming_subroots;
+    getConsumingSubroots(op, consuming_subroots);
+    if (consuming_subroots.size() > 1) {
+      regular_xroots.insert(op);
     }
   }
 }
@@ -876,10 +925,15 @@ bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
     }
   }
 
-  matchExpensiveElemwiseAsSubroots(shapeAnalysis, fusion_pattern);
+  matchExpensiveElemwiseAsSubroot(shapeAnalysis, fusion_pattern);
   // TODO: alter codegen of the newly matched subroot.
 
-  // TODO: global memory buffer for intermeidate common operands.
+  // If an op is consumed by multiple subroots, set it as regular xroot if it is
+  // successfully tiled.
+  // TODO: write microbenchmark to make sure store intermediate result on gmem
+  // is always bettern than recomputation.
+  matchMultiUsedOpAsRegularXroot(fusion_pattern);
+
   // TODO: add speculation hint here.
 
   return true;
