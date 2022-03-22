@@ -2602,6 +2602,9 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
           LLVM_DEBUG(llvm::dbgs() << "Failed to lower: " << *skeleton << "\n");
           return failure();
         }
+#if 1
+        // For subroots, load and write to shared memory buffer.
+#endif
       }
 
       b.setInsertionPointAfter(for_op_j);
