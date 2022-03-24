@@ -2386,6 +2386,7 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
                                       int row_reduction_schedule) {
   auto root_ops = fusion_pattern.getRootOps();
   auto sub_root_ops = fusion_pattern.getSubRootOps();
+  DenseSet<Operation*> sub_roots(sub_root_ops.begin(), sub_root_ops.end());
   auto result_values = fusion_pattern.getResults();
   DenseSet<Operation*> roots(root_ops.begin(), root_ops.end());
   DenseSet<Value> results(result_values.begin(), result_values.end());
@@ -2484,9 +2485,26 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
     auto skeleton = skeleton_group.skeleton;
     Location loc = skeleton->getLoc();
     b.setInsertionPointToEnd(parallel_op.getBody());
+    Value out_value = cast<lmhlo::LmhloOp>(skeleton).getResultBuffer();
+    auto tile_info = tile_plan.find(out_value);
+    if (tile_info == tile_plan.end() ||
+        tile_info->second.tileSizes.size() != 0) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "Tile info error for: " << *skeleton << "\n");
+      return failure();
+    }
+    Value result_shmem;
+    if (sub_roots.contains(skeleton)) {
+      result_shmem = createSharedMemoryForOp(b, loc, skeleton, row_per_block);
+      if (result_shmem == nullptr) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "Create shared memory failed for: " << *skeleton << "\n");
+        return failure();
+      }
+      shm_mapping[out_value] = result_shmem;
+    }
 
     if (isRank2RowReduction(skeleton)) {
-      Value out_value = cast<lmhlo::LmhloOp>(skeleton).getResultBuffer();
       Value result_shmem;
       result_shmem = createSharedMemoryForOp(b, loc, skeleton, row_per_block);
       if (result_shmem == nullptr) {
@@ -2496,13 +2514,6 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
       }
       shm_mapping[out_value] = result_shmem;
 
-      auto tile_info = tile_plan.find(out_value);
-      if (tile_info == tile_plan.end() ||
-          tile_info->second.tileSizes.size() != 0) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "Tile info error for: " << *skeleton << "\n");
-        return failure();
-      }
       LowerConfig::SpecificLoader loader(load_config_func, result_shmem,
                                          row_per_block);
       lower_config.setSpecificLoader(
@@ -2530,14 +2541,6 @@ LogicalResult lowerWithScheduleStitch(lmhlo::FusionOp& fusion_op,
         b.create<gpu::BarrierOp>(loc);
       }
     } else {
-      Value out_value = cast<lmhlo::LmhloOp>(skeleton).getResultBuffer();
-      auto tile_info = tile_plan.find(out_value);
-      if (tile_info == tile_plan.end()) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "Failed to find tile info: " << *skeleton << "\n");
-        return failure();
-      }
-
       // Get row-id according to codegen schedule.
       // TODO: reuse row_ids between sub-roots and external-only-roots.
       Value block_row_base =
