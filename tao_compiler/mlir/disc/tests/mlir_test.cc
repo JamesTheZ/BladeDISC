@@ -891,6 +891,16 @@ Status MlirTestImpl::GenerateInputAndRun() {
       // void* args[1] = {(void*)&ral_ctx_ptr};
       entry_func(args);
 
+#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
+      // Free inputs on GPU.
+      for (int idx = 0; idx < num_inputs_; ++idx) {
+        if (input_placement_[idx] != DeviceType::kCPU &&
+            d_addr_vec[idx] != nullptr) {
+          gpu_dealloc(d_addr_vec[idx]);
+        }
+      }
+#endif
+
       // bind outputs
       output_shapes.clear();
       for (int idx = 0; idx < num_outputs_; ++idx) {
@@ -1115,6 +1125,10 @@ Status MlirTestImpl::GenerateInputAndRun() {
       return Internal("Error: unsupported output element type: ",
                       out_elem_types_[idx]);
     }
+    // Free buffer on GPU.
+    if (nelem && result != nullptr) {
+      gpu_dealloc(result);
+    }
 #else
     if (output_placement_[idx] != DeviceType::kCPU) {
       return Internal(
@@ -1168,15 +1182,6 @@ Status MlirTestImpl::GenerateInputAndRun() {
     }
 #endif
   }
-
-#if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
-  for (int idx = 0; idx < num_inputs_; ++idx) {
-    if (input_placement_[idx] != DeviceType::kCPU &&
-        d_addr_vec[idx] != nullptr) {
-      gpu_dealloc(d_addr_vec[idx]);
-    }
-  }
-#endif
 
   return Status::OK();
 }
