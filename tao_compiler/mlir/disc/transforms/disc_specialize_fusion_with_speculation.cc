@@ -25,7 +25,6 @@
 #include "tensorflow/compiler/mlir/disc/transforms/codegen_utils.h"
 #include "tensorflow/compiler/mlir/disc/transforms/fusion_utils.h"
 #include "tensorflow/compiler/mlir/disc/transforms/placement_utils.h"
-#include "tensorflow/core/util/env_var.h"
 
 namespace mlir {
 namespace disc_ral {

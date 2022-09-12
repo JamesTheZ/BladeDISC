@@ -416,9 +416,11 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
         disc_ral::createDiscMemRefLoadStoreSimplifierPass());
   }
   std::string fusion_strategy =
-      isCompIntensFusionEnabled() ? "Dot" : (enable_stitch ? "stitch" : "base");
+      isCompIntensFusionEnabled() ? "dot" : (enable_stitch ? "stitch" : "base");
   pm.addNestedPass<FuncOp>(
       disc_ral::createDiscFusionPass(gpu_enabled, fusion_strategy));
+  // TODO: move out constant result of kDot fusion.
+  pm.addPass(disc_ral::createDiscCompIntensFusionToFuncPass());
   if (gpu_enabled) {
     // TODO: Support cpu stitch with splat const
     pm.addNestedPass<FuncOp>(disc_ral::createDiscFuseSplatConstPass());
@@ -532,6 +534,10 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   pm.addNestedPass<FuncOp>(disc_ral::createLhloFusionInlinerPass());
 
   if (gpu_enabled) {
+    // Lower dot fusion to CUDA.
+    pm.addPass(disc_ral::createDiscCompIntensFusionToCUDASourcePass(
+        gpu_options.cc_major, gpu_options.cc_minor));
+
     pm.addPass(disc_ral::createReviseGpuKernelOutliningPass());
 
     // Device side codegen: gpu.module -> cubin
@@ -577,6 +583,8 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
         gpu_options.cc_major, gpu_options.cc_minor,
         options.gpu_options.multi_cc_support,
         options.gpu_options.multi_cc_support_dbg_ptx_only));
+
+    pm.addPass(disc_ral::createDiscGPUSourceToLibPass());
   } else {
     if (options.cpu_options.fast_math_level > 0) {
       // Approximate Tanh using standard operations.

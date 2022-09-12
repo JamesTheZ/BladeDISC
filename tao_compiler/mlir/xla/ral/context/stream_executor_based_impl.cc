@@ -11,6 +11,7 @@
 
 #include "tensorflow/compiler/mlir/xla/ral/context/stream_executor_based_impl.h"
 
+#include <dlfcn.h>
 #include <functional>
 #include <iostream>
 
@@ -25,6 +26,10 @@
 #include "tensorflow/core/util/env_var.h"
 #if defined(PLATFORM_ALIBABA) and defined(ENABLE_BLADE_GEMM)
 #include "bladnn/bladnn.h"
+#endif
+
+#if 1
+#include <cuda_runtime.h>
 #endif
 
 #ifdef TAO_RAL_USE_STREAM_EXECUTOR
@@ -460,6 +465,101 @@ void ral_qgemm(
   }
 #endif
   ctx->signalError(Context::FAILURE, "Should turn on bladnn first.");
+}
+
+void ral_comp_intens_fusion(
+    ExecutionContext* ctx,
+    const char* kernel_name,  /* function name to call on host side */
+    const char* dyn_lib_path, /* lib path containing the function */
+    void* stream_handle,      /* stream */
+    void** params /* kernel params */) {
+  void* func_handle = dlopen(dyn_lib_path, RTLD_NOW);
+  if (!func_handle) {
+    std::string msg =
+        std::string("Fail to open compiled .so file with error: ") + dlerror() +
+        ". Fail to launch compute-intensive fusion kernel " + kernel_name;
+    TAO_VLOG(0) << msg;
+    ctx->signalError(Context::FAILURE, msg);
+    return;
+  }
+
+  void* fusion_func_ptr = dlsym(func_handle, kernel_name);
+  if (!fusion_func_ptr) {
+    std::string msg =
+        std::string("Fail to find fusion func: ") + kernel_name + ".";
+    TAO_VLOG(0) << msg;
+    ctx->signalError(Context::FAILURE, msg);
+    return;
+  }
+
+  using func_t = bool (*)(void*, void**);
+  auto fusion_func = (func_t)fusion_func_ptr;
+  // auto fusion_func =
+  // reinterpret_cast<std::function<bool(void**)>>(fusion_func_ptr);
+
+  auto gpu_driver = ctx->getDriver<GPUDriver>(GPUDriver::name());
+  auto stream =
+      static_cast<se::Stream*>(gpu_driver->asSEStream(ctx, stream_handle));
+  void* s = stream->implementation()->GpuStreamHack();
+#if 0
+  int64_t GRank = 4;
+  int64_t size_struct = 3 + GRank * 2;
+  int64_t batch_size = 1;
+  for (int64_t i = 0; i < GRank - 2; ++i) {
+    int64_t* a_size = reinterpret_cast<int64_t*>(params[3 + i]);
+    batch_size *= *a_size;
+  }
+  std::cout << "[ZZ] ral A sizes.\n";
+  for (int i = 0; i < GRank; i++) {
+    int64_t* a_size = reinterpret_cast<int64_t*>(params[3 + i]);
+    std::cout << i << ":" << *a_size << "\n";
+  }
+  std::cout << "[ZZ] ral B sizes.\n";
+  for (int i = 0; i < GRank; i++) {
+    int64_t* b_size = reinterpret_cast<int64_t*>(params[3 + size_struct + i]);
+    std::cout << i << ":" << *b_size << "\n";
+  }
+  std::cout << std::flush;
+
+  float* A_ = *reinterpret_cast<float**>(params[1]);
+  float* B_ = *reinterpret_cast<float**>(params[1 + size_struct]);
+  // Row major.
+  int64_t m_ = *reinterpret_cast<int64_t*>(params[3 + GRank - 2]);
+  int64_t k_ = *reinterpret_cast<int64_t*>(params[3 + GRank - 1]);
+  int64_t n_ = *reinterpret_cast<int64_t*>(params[3 + size_struct + GRank - 1]);
+
+  float* A_host = (float*)malloc(sizeof(float) * batch_size * m_ * k_);
+  float* B_host = (float*)malloc(sizeof(float) * batch_size * k_ * n_);
+  cudaMemcpy(A_host, A_, sizeof(float) * batch_size * m_ * k_, cudaMemcpyDefault);
+  cudaMemcpy(B_host, B_, sizeof(float) * batch_size * k_ * n_, cudaMemcpyDefault);
+
+  for (int b = 0; b < batch_size; b++) {
+    for (int m = 0; m < m_; m++) {
+      for (int k = 0; k < k_; k++) {
+        std::cout << "A ral val at " << b << "," << m << "," << k << ": "
+                  << A_host[b * m_ * k_ + m * k_ + k] << std::endl;
+      }
+    }
+  }
+  for (int b = 0; b < batch_size; b++) {
+    for (int k = 0; k < k_; k++) {
+      for (int n = 0; n < n_; n++) {
+        std::cout << "B ral val at " << b << "," << k << "," << n <<": "
+                  << B_host[b * k_ * n_ + k * n_ + n] << std::endl;
+      }
+    }
+  }
+#endif
+
+  // TODO: deal with context.
+  bool result = fusion_func(s, params);
+
+  if (!result) {
+    std::string msg =
+        std::string("Error to execute fusion func: ") + kernel_name + ".";
+    TAO_VLOG(0) << msg;
+    ctx->signalError(Context::FAILURE, msg);
+  }
 }
 
 template <typename T, int N>
@@ -1804,6 +1904,10 @@ TAO_RAL_API("ral_conv", "gpu",
             gpu::se_impl::gpu_conv_impl::ral_conv<Eigen::half, 3>);
 TAO_RAL_API("ral_qconv", "gpu",
             gpu::se_impl::gpu_conv_impl::ral_qconv<int8_t, 4>);
+
+// compute-intensive fusion
+TAO_RAL_API("ral_comp_intens_fusion", "gpu",
+            gpu::se_impl::ral_comp_intens_fusion);
 
 }  // namespace ral
 }  // namespace tao

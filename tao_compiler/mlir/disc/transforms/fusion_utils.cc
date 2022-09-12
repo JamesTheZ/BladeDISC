@@ -509,10 +509,6 @@ int64_t getFirstOperandIndex(Operation* op, Value value) {
 // Returns a process-level fusion strategy singleton.
 FusionStrategy& getFusionStrategy(StringRef device, StringRef strategy);
 
-bool isStitchFusion(Operation* op) {
-  return isFusionType<FusionType::kStitch>(op);
-}
-
 // Create a new fusion pattern from a single op.
 FusionPatternBase::FusionPatternBase(Operation* op) {
   op_list_.push_back(op);
@@ -983,26 +979,57 @@ bool FusionStrategy::isFusible(Operation* op) {
 }
 
 bool FusionStrategy::isFusible(FusionPattern& fusion_pattern) {
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+  dumpFusionPattern(fusion_pattern);
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   if (!fusion_pattern.isFusible()) return false;
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   for (Operation* op : fusion_pattern.getOpList()) {
     if (!isFusible(op)) return false;
   }
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   return true;
 }
 
 bool FusionStrategy::tryFuseInplace(ShapeAnalysis& shapeAnalysis,
                                     FusionPattern& lhs, FusionPattern& rhs) {
+#if 0
+  llvm::errs() << "[ZZ] reach tryFuseInplace\n";
+#endif
   // both lhs & rhs should be fusible
   if (!isFusible(lhs) || !isFusible(rhs)) {
     return false;
   }
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+  llvm::errs() << "[ZZ] try to fuse two patterns:\n";
+  llvm::errs() << "1:\n";
+  dumpFusionPattern(lhs);
+  llvm::errs() << "2:\n";
+  dumpFusionPattern(rhs);
+#endif
   FusionPattern result = lhs.mergeWithoutInit(rhs);
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   if (!tryFuse(shapeAnalysis, lhs, rhs, result)) {
     return false;
   }
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   if (!initFusionPattern(shapeAnalysis, result)) {
     return false;
   }
+#if 0
+  llvm::errs() << "[ZZ] reach " << __FILE__ << ":" << __LINE__ << "\n";
+#endif
   lhs = result;
   return true;
 }
