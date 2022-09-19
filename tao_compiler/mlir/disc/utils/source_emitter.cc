@@ -1,18 +1,22 @@
 
 #include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
 
+#include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
+#include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
+#include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
+
 namespace mlir {
 namespace disc_ral {
 
 using ValueNameBinding = SourceEmitterCUDA::ValueNameBinding;
 
-template <typename OP>
+template <typename OPType>
 std::string CUDAMathFuncName(Type type) {
   assert(false & "unsupported op");
 }
 
-template <lmhlo::AbsOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::AbsOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "__habs";
   } else if (type.isF32() || type.isF64() || type.isInteger(32) ||
@@ -23,8 +27,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::CeilOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::CeilOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hceil";
   } else if (type.isF32() || type.isF64()) {
@@ -34,8 +38,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::ConvertOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::ConvertOp>(Type type) {
   if (type.isBF16()) {
     return "__nv_bfloat162";
   } else if (type.isF16()) {
@@ -57,8 +61,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::CosineOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::CosineOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hcos";
   } else if (type.isF32() || type.isF64()) {
@@ -68,8 +72,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::ExpOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::ExpOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hexp";
   } else if (type.isF32() || type.isF64()) {
@@ -79,8 +83,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::FloorOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::FloorOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hfloor";
   } else if (type.isF32() || type.isF64()) {
@@ -90,8 +94,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::IsFiniteOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::IsFiniteOp>(Type type) {
   if (type.isF32() || type.isF64()) {
     return "isfinite";
   } else {
@@ -99,8 +103,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::LogOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::LogOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hlog";
   } else if (type.isF32() || type.isF64()) {
@@ -110,8 +114,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::Log1pOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::Log1pOp>(Type type) {
   if (type.isF32() || type.isF64()) {
     return "log1p";
   } else {
@@ -119,20 +123,18 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-// template<lmhlo::LogisticOp>
-
-template <lmhlo::NegOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::NegOp>(Type type) {
   return "(-)";
 }
 
-template <lmhlo::NotOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::NotOp>(Type type) {
   return "(!)";
 }
 
-template <lmhlo::RsqrtOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::RsqrtOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hrsqrt";
   } else if (type.isF32() || type.isF64()) {
@@ -142,10 +144,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-// template<lmhlo::SignOp>
-
-template <lmhlo::SqrtOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::SqrtOp>(Type type) {
   if (type.isBF16() || type.isF16()) {
     return "hsqrt";
   } else if (type.isF32() || type.isF64()) {
@@ -155,8 +155,8 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-template <lmhlo::TanhOp>
-std::string CUDAMathFuncName(Type type) {
+template <>
+std::string CUDAMathFuncName<lmhlo::TanhOp>(Type type) {
   if (type.isF32() || type.isF64()) {
     return "tanh";
   } else {
@@ -164,7 +164,11 @@ std::string CUDAMathFuncName(Type type) {
   }
 }
 
-std::string SourceEmitterCUDA::EmitTypeStr(Type type) {
+// TODO:
+// template<lmhlo::SignOp>
+// template<lmhlo::LogisticOp>
+
+std::string MLIRType2CUDATypeStr(Type type) {
   if (type.isBF16()) {
     return "__nv_bfloat162";
   } else if (type.isF16()) {
@@ -193,81 +197,83 @@ std::string SourceEmitterCUDA::EmitTypeStr(Type type) {
 // Rely on nvcc to use fast-math.
 llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseUnaryOp(
     Operation* op, ValueNameBinding binding) {
-  auto lhs = op->getOperand(0);
-  if (binding.count(lhs) == 0) {
-    return nullptr;
+  auto input = op->getOperand(0);
+  if (binding.count(input) == 0) {
+    llvm::None;
   }
-  std::string lhs_str = binding[lhs];
+  std::string input_str = binding[input];
 
-  Type type = op->getOperand(1).getType().cast<MemRefType>().getElementType();
-  std::string type_str = EmitTypeStr(type);
+  Type result_type =
+      op->getOperand(1).getType().cast<MemRefType>().getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
   std::string result_name;
   std::string expression;
-  if (isa < lmhlo::AbsOp) {
+  if (isa<lmhlo::AbsOp>(op)) {
     result_name = EmitUniqueName("abs");
     expression =
-        std::format(CUDAMathFuncName<lmhlo::AbsOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::CeilOp) {
+        CUDAMathFuncName<lmhlo::AbsOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::CeilOp>(op)) {
     result_name = EmitUniqueName("ceil");
-    expression = std::format(CUDAMathFuncName<lmhlo::CeilOp>(type_str) + "({})",
-                             lhs_str);
-  } else if (isa < lmhlo::ConvertOp) {
+    expression =
+        CUDAMathFuncName<lmhlo::CeilOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::ConvertOp>(op)) {
     result_name = EmitUniqueName("convert");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::ConvertOp>(type_str) + "({})", lhs_str);
-    // } else if (isa<lmhlo::CopyOp) {
-  } else if (isa < lmhlo::CosineOp) {
+    expression =
+        CUDAMathFuncName<lmhlo::ConvertOp>(result_type) + "(" + input_str + ")";
+    // } else if (isa<lmhlo::CopyOp>) {
+  } else if (isa<lmhlo::CosineOp>(op)) {
     result_name = EmitUniqueName("consine");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::CosineOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::ExpOp) {
+    expression =
+        CUDAMathFuncName<lmhlo::CosineOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::ExpOp>(op)) {
     result_name = EmitUniqueName("exp");
     expression =
-        std::format(CUDAMathFuncName<lmhlo::ExpOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::FloorOp) {
+        CUDAMathFuncName<lmhlo::ExpOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::FloorOp>(op)) {
     result_name = EmitUniqueName("floor");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::FloorOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::IsFiniteOp) {
+    expression =
+        CUDAMathFuncName<lmhlo::FloorOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::IsFiniteOp>(op)) {
     result_name = EmitUniqueName("isfinite");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::IsFiniteOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::LogOp) {
+    expression = CUDAMathFuncName<lmhlo::IsFiniteOp>(result_type) + "(" +
+                 input_str + ")";
+  } else if (isa<lmhlo::LogOp>(op)) {
     result_name = EmitUniqueName("log");
     expression =
-        std::format(CUDAMathFuncName<lmhlo::LogOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::Log1pOp) {
+        CUDAMathFuncName<lmhlo::LogOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::Log1pOp>(op)) {
     result_name = EmitUniqueName("log1p");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::Log1pOp>(type_str) + "({})", lhs_str);
+    expression =
+        CUDAMathFuncName<lmhlo::Log1pOp>(result_type) + "(" + input_str + ")";
     // } else if (isa<lmhlo::LogisticOp) {
-  } else if (isa < lmhlo::NegOp) {
+  } else if (isa<lmhlo::NegOp>(op)) {
     result_name = EmitUniqueName("neg");
     expression =
-        std::format(CUDAMathFuncName<lmhlo::NegOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::NotOp) {
+        CUDAMathFuncName<lmhlo::NegOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::NotOp>(op)) {
     result_name = EmitUniqueName("not");
     expression =
-        std::format(CUDAMathFuncName<lmhlo::NotOp>(type_str) + "({})", lhs_str);
-  } else if (isa < lmhlo::RsqrtOp) {
+        CUDAMathFuncName<lmhlo::NotOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::RsqrtOp>(op)) {
     result_name = EmitUniqueName("rsqrt");
-    expression = std::format(
-        CUDAMathFuncName<lmhlo::RsqrtOp>(type_str) + "({})", lhs_str);
+    expression =
+        CUDAMathFuncName<lmhlo::RsqrtOp>(result_type) + "(" + input_str + ")";
     // } else if (isa<lmhlo::SignOp) {
-  } else if (isa < lmhlo::SqrtOp) {
+  } else if (isa<lmhlo::SqrtOp>(op)) {
     result_name = EmitUniqueName("sqrt");
-    expression = std::format(CUDAMathFuncName<lmhlo::SqrtOp>(type_str) + "({})",
-                             lhs_str);
-  } else if (isa < lmhlo::TanhOp) {
+    expression =
+        CUDAMathFuncName<lmhlo::SqrtOp>(result_type) + "(" + input_str + ")";
+  } else if (isa<lmhlo::TanhOp>(op)) {
     result_name = EmitUniqueName("tanh");
-    expression = std::format(CUDAMathFuncName<lmhlo::TanhOp>(type_str) + "({})",
-                             lhs_str);
+    expression =
+        CUDAMathFuncName<lmhlo::TanhOp>(result_type) + "(" + input_str + ")";
   }
 
   assert(binding.count(op->getOperand(1)) == 0);
   binding[op->getOperand(1)] = result_name;
 
-  return std::format("{} {} = {};", type_str, result_name, expression);
+  return type_str + " " + result_name + " = " + expression;
 }
 
 llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
@@ -275,13 +281,15 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
   auto lhs = op->getOperand(0);
   auto rhs = op->getOperand(1);
   if (binding.count(lhs) == 0 || binding.count(rhs) == 0) {
-    return nullptr;
+    llvm::None;
   }
   std::string lhs_str = binding[lhs];
   std::string rhs_str = binding[rhs];
 
-  Type type = op->getOperand(1).getType().cast<MemRefType>().getElementType();
-  std::string type_str = EmitTypeStr(op);
+  Type result_type =
+      op->getOperand(2).getType().cast<MemRefType>().getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
   std::string result_name;
   std::string expression;
   if (isa<lmhlo::AddOp>(op)) {
@@ -305,23 +313,23 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
   } else if (auto compare = dyn_cast_or_null<lmhlo::CompareOp>(op)) {
     result_name = EmitUniqueName("compare");
     std::string cmp_str;
-    switch (compare.comparison_direction()) {
-      case ComparisonDirection::EQ:
+    switch (compare.getComparisonDirection()) {
+      case mhlo::ComparisonDirection::EQ:
         cmp_str = "==";
         break;
-      case ComparisonDirection::NE:
+      case mhlo::ComparisonDirection::NE:
         cmp_str = "!=";
         break;
-      case ComparisonDirection::LT:
+      case mhlo::ComparisonDirection::LT:
         cmp_str = "<";
         break;
-      case ComparisonDirection::LE:
+      case mhlo::ComparisonDirection::LE:
         cmp_str = "<=";
         break;
-      case ComparisonDirection::GT:
+      case mhlo::ComparisonDirection::GT:
         cmp_str = ">";
         break;
-      case ComparisonDirection::GE:
+      case mhlo::ComparisonDirection::GE:
         cmp_str = ">=";
         break;
     }
@@ -347,97 +355,59 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
 }
 
 std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
-  std::string name = "bladedisc_" + op_str;
-  if (existing_names.count(op_str) == 0) {
-    existing_names.emplace(op_str, 0);
+  std::string name = "bladedisc_" + op_str.str();
+  if (existing_names_.count(op_str.str()) == 0) {
+    existing_names_.try_emplace(op_str.str(), 0);
   }
-  int32_t count = existing_names[op_str]++;
+  int32_t count = existing_names_[op_str.str()]++;
   name += std::to_string(count);
 
   return name;
 }
 
-std::string SourceEmitterCUDA::EmitElemWiseTernaryOp(
+llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseTernaryOp(
     Operation* op, ValueNameBinding& binding) {
-  /*
-    if (isa<lmhlo::SelectOp, lmhlo::ClampOp>(op)) {
-      auto ref = op->getOperand(0).getType().cast<MemRefType>();
-      for (Value v : op->getOperands().drop_front())
-        if (v.getType().cast<MemRefType>().getRank() != ref.getRank())
-          return false;
-      return true;
-    }
-  */
+  auto input0 = op->getOperand(0);
+  auto input1 = op->getOperand(1);
+  auto input2 = op->getOperand(2);
+  if (binding.count(input0) == 0 || binding.count(input1) == 0 ||
+      binding.count(input2) == 0) {
+    llvm::None;
+  }
+  std::string input0_str = binding[input0];
+  std::string input1_str = binding[input1];
+  std::string input2_str = binding[input2];
+
+  Type result_type =
+      op->getOperand(3).getType().cast<MemRefType>().getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
+  std::string result_name;
+  std::string expression;
+  if (isa<lmhlo::SelectOp>(op)) {
+    result_name = EmitUniqueName("select");
+    expression = input0_str + " ? " + input1_str + " : " + input2_str;
+  } else if (isa<lmhlo::ClampOp>(op)) {
+    result_name = EmitUniqueName("clamp");
+    expression = input0_str + " < " + input1_str + " ? " + input1_str + " : (" +
+                 input0_str + " > " + input2_str + " ? " + input2_str + " : " +
+                 input0_str + ")";
+  }
+
+  assert(binding.count(op->getOperand(3)) == 0);
+  binding[op->getOperand(3)] = result_name;
+
+  return type_str + " " + result_name + " = " + expression;
+}
+
+void SourceEmitterCUDA::initValueNameBinding(SmallVectorImpl<Value> inputs,
+                                             SmallVectorImpl<std::string> names,
+                                             ValueNameBinding& binding) {
+  assert(inputs.size() == names.size());
+  for (int64_t i = 0; i < inputs.size(); i++) {
+    binding[inputs[i]] = names[i];
+  }
 }
 
 }  // namespace disc_ral
 }  // namespace mlir
-
-/*
-
-// Returns true if the op is an elementwise unary lmhlo op.
-// TODO(disc): use fusibility interface
-// TODO(disc): Unify with disc_supported_list.h and Elementwise Trait
-bool isElementWiseUnary(Operation* op) {
-  // clang-format off
-  return isa<
-    lmhlo::AbsOp,
-    lmhlo::CeilOp,
-    lmhlo::ConvertOp,
-    lmhlo::CopyOp,
-    lmhlo::CosineOp,
-    lmhlo::ExpOp,
-    lmhlo::FloorOp,
-    lmhlo::IsFiniteOp,
-    lmhlo::LogOp,
-    lmhlo::Log1pOp,
-    lmhlo::LogisticOp,
-    lmhlo::NegOp,
-    lmhlo::NotOp,
-    lmhlo::RsqrtOp,
-    lmhlo::SignOp,
-    lmhlo::SqrtOp,
-    lmhlo::TanhOp
-  >(op);
-  // clang-format on
-}
-
-// Returns true if the op is an elementwise binary lmhlo op.
-// TODO(disc): use fusibility interface
-bool isElementWiseBinary(Operation* op) {
-  // clang-format off
-  return isa<
-    lmhlo::AddOp,
-    lmhlo::AndOp,
-    lmhlo::CompareOp,
-    lmhlo::DivOp,
-    lmhlo::MaxOp,
-    lmhlo::MinOp,
-    lmhlo::MulOp,
-    lmhlo::OrOp,
-    lmhlo::PowOp,
-    lmhlo::RemOp,
-    lmhlo::SubtractOp
-  >(op);
-  // clang-format on
-}
-
-// Returns true if the op is an elementwise ternary lmhlo op.
-bool isElementWiseTernary(Operation* op) {
-  // Some ternary lmhlo ops (e.g. select op) suppport a restricted implicit
-  // broadcast semantic, that is: if one input has rank zero, then it will be
-  // automatically broadcasted if necessary. Thus we can know that there is no
-  // broadcast if all operands have the same rank.
-  if (isa<lmhlo::SelectOp, lmhlo::ClampOp>(op)) {
-    auto ref = op->getOperand(0).getType().cast<MemRefType>();
-    for (Value v : op->getOperands().drop_front())
-      if (v.getType().cast<MemRefType>().getRank() != ref.getRank())
-        return false;
-    return true;
-  }
-
-  return false;
-}
-*/
-
-#endif  // MLIR_DISC_UTILS_SOURCE_EMITTER

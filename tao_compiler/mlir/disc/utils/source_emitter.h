@@ -14,17 +14,24 @@ class SourceEmitterCUDA {
   using ValueNameBinding = llvm::DenseMap<Value, std::string>;
 
  public:
-  std::string EmitElemWiseUnaryOp(Operation* op, ValueNameBinding& binding);
-  std::string EmitElemWiseBinaryOp(Operation* op, ValueNameBinding& binding);
-  std::string EmitElemWiseTernaryOp(Operation* op, ValueNameBinding& binding);
+  llvm::Optional<std::string> EmitElemWiseUnaryOp(Operation* op,
+                                                  ValueNameBinding binding);
+
+  llvm::Optional<std::string> EmitElemWiseBinaryOp(Operation* op,
+                                                   ValueNameBinding binding);
+
+  llvm::Optional<std::string> EmitElemWiseTernaryOp(Operation* op,
+                                                    ValueNameBinding& binding);
+
+  void initValueNameBinding(SmallVectorImpl<Value> inputs,
+                            SmallVectorImpl<std::string> names,
+                            ValueNameBinding& binding);
 
  private:
-  llvm::DenseMap<std::string, int32_t> existing_names_;
+  std::unordered_map<std::string, int32_t> existing_names_;
 
  private:
-  void EmitElemWiseOp(Operation* op, SmallVectorImpl<StringRef>& operands,
-                      std::string& result, std::string& instruction);
-  std::string EmitValueName(std::string op_str);
+  std::string EmitUniqueName(llvm::StringRef op_str);
 };
 
 }  // namespace disc_ral
