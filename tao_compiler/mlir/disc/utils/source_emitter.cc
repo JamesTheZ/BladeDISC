@@ -4,6 +4,7 @@
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
+#include "tensorflow/compiler/mlir/disc/disc_util.h"
 
 namespace mlir {
 namespace disc_ral {
@@ -354,17 +355,6 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
   return type_str + " " + result_name + " = " + expression;
 }
 
-std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
-  std::string name = "bladedisc_" + op_str.str();
-  if (existing_names_.count(op_str.str()) == 0) {
-    existing_names_.try_emplace(op_str.str(), 0);
-  }
-  int32_t count = existing_names_[op_str.str()]++;
-  name += std::to_string(count);
-
-  return name;
-}
-
 llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseTernaryOp(
     Operation* op, ValueNameBinding& binding) {
   auto input0 = op->getOperand(0);
@@ -400,9 +390,98 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseTernaryOp(
   return type_str + " " + result_name + " = " + expression;
 }
 
-void SourceEmitterCUDA::initValueNameBinding(SmallVectorImpl<Value> inputs,
-                                             SmallVectorImpl<std::string> names,
-                                             ValueNameBinding& binding) {
+llvm::Optional<std::string> SourceEmitterCUDA::EmitScalarOrSplatConstantOp(
+    Operation* op, ValueNameBinding& binding) {
+  lmhlo::ConstantOp constant = dyn_cast_or_null<lmhlo::ConstantOp>(op);
+  if (!constant) {
+    return llvm::None;
+  }
+  MemRefType memref_type = constant.getOutput().getType().cast<MemRefType>();
+  bool is_splat = constant.getValue().isSplat();
+  // Only supports scalar and splat constant op.
+  if (memref_type.getRank() != 0 && !is_splat) {
+    return llvm::None;
+  }
+
+  Type result_type = memref_type.getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
+  std::string result_name = EmitUniqueName("constant");
+
+  auto elem_ty = memref_type.getElementType();
+  std::string expression;
+  if (elem_ty.isIntOrIndex()) {
+    int64_t val =
+        is_splat ? constant.getValue().getSplatValue<APInt>().getSExtValue()
+                 : constant.getValue().getValues<APInt>()[{}].getSExtValue();
+    expression = std::to_string(val);
+  } else if (isa<mlir::FloatType>(elem_ty)) {
+    double val =
+        is_splat
+            ? constant.getValue().getSplatValue<APFloat>().convertToDouble()
+            : constant.getValue().getValues<APFloat>()[{}].convertToDouble();
+    expression = std::to_string(val);
+  } else {
+    return llvm::None;
+  }
+
+  assert(binding.count(op->getOperand(0)) == 0);
+  binding[op->getOperand(0)] = result_name;
+
+  return type_str + " " + result_name + " = " + expression;
+}
+
+llvm::Optional<std::string>
+SourceEmitterCUDA::EmitBroadcastOfScalarOrSplatConstantOp(
+    Operation* op, ValueNameBinding& binding) {
+  lmhlo::DynamicBroadcastInDimOp bcast =
+      dyn_cast_or_null<lmhlo::DynamicBroadcastInDimOp>(op);
+  if (!bcast) {
+    return llvm::None;
+  }
+
+  // Only deal with the case that the last rewriter in the same block is the
+  // ConstantOp.
+  DenseMap<Value, Operation*> last_writer;
+  auto& ops_in_block = op->getBlock()->getOperations();
+  for (Operation& op_in_block : ops_in_block) {
+    int num_input_operand =
+        op_in_block.getNumOperands() - getNumResultOperands(&op_in_block);
+    for (Value v : op_in_block.getOperands().drop_front(num_input_operand)) {
+      bool inserted = last_writer.try_emplace(v, &op_in_block).second;
+      (void)inserted;
+      assert(inserted);
+    }
+  }
+
+  Value source = op->getOperand(0);
+  // Assume `source` will not be modified after `op`.
+  Operation* input_op = nullptr;
+  auto it = last_writer.find(source);
+  if (it != last_writer.end()) {
+    input_op = it->second;
+  } else {
+    // Only deal with the case that `source` is updated in the same block.
+    return llvm::None;
+  }
+
+  return EmitScalarOrSplatConstantOp(input_op, binding);
+}
+
+std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
+  std::string name = "bladedisc_" + op_str.str();
+  if (existing_names_.count(op_str.str()) == 0) {
+    existing_names_.try_emplace(op_str.str(), 0);
+  }
+  int32_t count = existing_names_[op_str.str()]++;
+  name += std::to_string(count);
+
+  return name;
+}
+
+void SourceEmitterCUDA::bindValueNames(SmallVectorImpl<Value> inputs,
+                                       SmallVectorImpl<std::string> names,
+                                       ValueNameBinding& binding) {
   assert(inputs.size() == names.size());
   for (int64_t i = 0; i < inputs.size(); i++) {
     binding[inputs[i]] = names[i];

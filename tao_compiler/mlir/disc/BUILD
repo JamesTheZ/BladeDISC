@@ -165,6 +165,18 @@ tf_cc_test(
 )
 
 cc_library(
+    name = "source_emitter",
+    srcs = ["utils/source_emitter.cc"],
+    hdrs = ["utils/source_emitter.h"],
+    includes = ["include"],
+    deps = [
+        ":disc_util",
+        ":lmhlo_disc",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
     name = "disc_util",
     srcs = [
         "disc_util.cc",
@@ -517,6 +529,7 @@ cc_library(
     deps = [
         ":disc_shape",
         ":disc_util",
+        ":source_emitter",
         "//tensorflow/compiler/xla/mlir_hlo:lhlo",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AffineDialect",

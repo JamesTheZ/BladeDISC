@@ -23,9 +23,15 @@ class SourceEmitterCUDA {
   llvm::Optional<std::string> EmitElemWiseTernaryOp(Operation* op,
                                                     ValueNameBinding& binding);
 
-  void initValueNameBinding(SmallVectorImpl<Value> inputs,
-                            SmallVectorImpl<std::string> names,
-                            ValueNameBinding& binding);
+  llvm::Optional<std::string> EmitScalarOrSplatConstantOp(
+      Operation* op, ValueNameBinding& binding);
+
+  llvm::Optional<std::string> EmitBroadcastOfScalarOrSplatConstantOp(
+      Operation* op, ValueNameBinding& binding);
+
+  void bindValueNames(SmallVectorImpl<Value> inputs,
+                      SmallVectorImpl<std::string> names,
+                      ValueNameBinding& binding);
 
  private:
   std::unordered_map<std::string, int32_t> existing_names_;
