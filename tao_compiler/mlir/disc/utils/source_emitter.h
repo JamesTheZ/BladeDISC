@@ -3,6 +3,7 @@
 
 #include <string>
 
+#include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
@@ -14,11 +15,15 @@ class SourceEmitterCUDA {
   using ValueNameBinding = llvm::DenseMap<Value, std::string>;
 
  public:
+  bool isSupportedOp(Operation* op);
+
+  llvm::Optional<std::string> EmitOp(Operation* op, ValueNameBinding& binding);
+
   llvm::Optional<std::string> EmitElemWiseUnaryOp(Operation* op,
-                                                  ValueNameBinding binding);
+                                                  ValueNameBinding& binding);
 
   llvm::Optional<std::string> EmitElemWiseBinaryOp(Operation* op,
-                                                   ValueNameBinding binding);
+                                                   ValueNameBinding& binding);
 
   llvm::Optional<std::string> EmitElemWiseTernaryOp(Operation* op,
                                                     ValueNameBinding& binding);
@@ -29,8 +34,8 @@ class SourceEmitterCUDA {
   llvm::Optional<std::string> EmitBroadcastOfScalarOrSplatConstantOp(
       Operation* op, ValueNameBinding& binding);
 
-  void bindValueNames(SmallVectorImpl<Value> inputs,
-                      SmallVectorImpl<std::string> names,
+  void bindValueNames(const SmallVectorImpl<Value>& inputs,
+                      const SmallVectorImpl<std::string>& names,
                       ValueNameBinding& binding);
 
  private:
@@ -38,6 +43,8 @@ class SourceEmitterCUDA {
 
  private:
   std::string EmitUniqueName(llvm::StringRef op_str);
+  llvm::Optional<std::string> EmitScalarOrSplatConstantExpression(
+      lmhlo::ConstantOp constant);
 };
 
 }  // namespace disc_ral

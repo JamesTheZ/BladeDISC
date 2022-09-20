@@ -1,4 +1,3 @@
-
 #include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
 
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
@@ -10,6 +9,8 @@ namespace mlir {
 namespace disc_ral {
 
 using ValueNameBinding = SourceEmitterCUDA::ValueNameBinding;
+
+namespace {
 
 template <typename OPType>
 std::string CUDAMathFuncName(Type type) {
@@ -165,10 +166,6 @@ std::string CUDAMathFuncName<lmhlo::TanhOp>(Type type) {
   }
 }
 
-// TODO:
-// template<lmhlo::SignOp>
-// template<lmhlo::LogisticOp>
-
 std::string MLIRType2CUDATypeStr(Type type) {
   if (type.isBF16()) {
     return "__nv_bfloat162";
@@ -195,9 +192,33 @@ std::string MLIRType2CUDATypeStr(Type type) {
   }
 }
 
+llvm::Optional<Operation*> findLastWriterInBlock(Value value, Block* block) {
+  DenseMap<Value, Operation*> last_writer;
+  for (Operation& op : block->getOperations()) {
+    int num_input_operand = op.getNumOperands() - getNumResultOperands(&op);
+    for (Value v : op.getOperands().drop_front(num_input_operand)) {
+      bool inserted = last_writer.try_emplace(v, &op).second;
+      (void)inserted;
+      assert(inserted);
+    }
+  }
+  auto it = last_writer.find(value);
+  if (it != last_writer.end()) {
+    return it->second;
+  } else {
+    return llvm::None;
+  }
+}
+
+}  // namespace
+
+// TODO:
+// template<lmhlo::SignOp>
+// template<lmhlo::LogisticOp>
+
 // Rely on nvcc to use fast-math.
 llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseUnaryOp(
-    Operation* op, ValueNameBinding binding) {
+    Operation* op, ValueNameBinding& binding) {
   auto input = op->getOperand(0);
   if (binding.count(input) == 0) {
     llvm::None;
@@ -278,7 +299,7 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseUnaryOp(
 }
 
 llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseBinaryOp(
-    Operation* op, ValueNameBinding binding) {
+    Operation* op, ValueNameBinding& binding) {
   auto lhs = op->getOperand(0);
   auto rhs = op->getOperand(1);
   if (binding.count(lhs) == 0 || binding.count(rhs) == 0) {
@@ -390,23 +411,15 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseTernaryOp(
   return type_str + " " + result_name + " = " + expression;
 }
 
-llvm::Optional<std::string> SourceEmitterCUDA::EmitScalarOrSplatConstantOp(
-    Operation* op, ValueNameBinding& binding) {
-  lmhlo::ConstantOp constant = dyn_cast_or_null<lmhlo::ConstantOp>(op);
-  if (!constant) {
-    return llvm::None;
-  }
+// Only supports scalar and splat constant op.
+llvm::Optional<std::string>
+SourceEmitterCUDA::EmitScalarOrSplatConstantExpression(
+    lmhlo::ConstantOp constant) {
   MemRefType memref_type = constant.getOutput().getType().cast<MemRefType>();
   bool is_splat = constant.getValue().isSplat();
-  // Only supports scalar and splat constant op.
   if (memref_type.getRank() != 0 && !is_splat) {
     return llvm::None;
   }
-
-  Type result_type = memref_type.getElementType();
-  std::string type_str = MLIRType2CUDATypeStr(result_type);
-
-  std::string result_name = EmitUniqueName("constant");
 
   auto elem_ty = memref_type.getElementType();
   std::string expression;
@@ -425,10 +438,31 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitScalarOrSplatConstantOp(
     return llvm::None;
   }
 
+  return expression;
+}
+
+llvm::Optional<std::string> SourceEmitterCUDA::EmitScalarOrSplatConstantOp(
+    Operation* op, ValueNameBinding& binding) {
+  lmhlo::ConstantOp constant = dyn_cast_or_null<lmhlo::ConstantOp>(op);
+  if (!constant) {
+    return llvm::None;
+  }
+  MemRefType memref_type = constant.getOutput().getType().cast<MemRefType>();
+
+  auto expression = EmitScalarOrSplatConstantExpression(constant);
+  if (!expression.hasValue()) {
+    return llvm::None;
+  }
+
+  Type result_type = memref_type.getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
+  std::string result_name = EmitUniqueName("constant");
+
   assert(binding.count(op->getOperand(0)) == 0);
   binding[op->getOperand(0)] = result_name;
 
-  return type_str + " " + result_name + " = " + expression;
+  return type_str + " " + result_name + " = " + expression.value();
 }
 
 llvm::Optional<std::string>
@@ -442,30 +476,55 @@ SourceEmitterCUDA::EmitBroadcastOfScalarOrSplatConstantOp(
 
   // Only deal with the case that the last rewriter in the same block is the
   // ConstantOp.
-  DenseMap<Value, Operation*> last_writer;
-  auto& ops_in_block = op->getBlock()->getOperations();
-  for (Operation& op_in_block : ops_in_block) {
-    int num_input_operand =
-        op_in_block.getNumOperands() - getNumResultOperands(&op_in_block);
-    for (Value v : op_in_block.getOperands().drop_front(num_input_operand)) {
-      bool inserted = last_writer.try_emplace(v, &op_in_block).second;
-      (void)inserted;
-      assert(inserted);
-    }
-  }
-
-  Value source = op->getOperand(0);
-  // Assume `source` will not be modified after `op`.
-  Operation* input_op = nullptr;
-  auto it = last_writer.find(source);
-  if (it != last_writer.end()) {
-    input_op = it->second;
-  } else {
-    // Only deal with the case that `source` is updated in the same block.
+  auto input_op = findLastWriterInBlock(op->getOperand(0), op->getBlock());
+  if (!input_op.hasValue()) {
     return llvm::None;
   }
 
-  return EmitScalarOrSplatConstantOp(input_op, binding);
+  lmhlo::ConstantOp constant =
+      dyn_cast_or_null<lmhlo::ConstantOp>(input_op.value());
+  if (!input_op) {
+    return llvm::None;
+  }
+
+  auto expression = EmitScalarOrSplatConstantExpression(constant);
+  if (!expression.hasValue()) {
+    return llvm::None;
+  }
+
+  Value result = op->getOperand(2);
+  MemRefType memref_type = result.getType().cast<MemRefType>();
+  Type result_type = memref_type.getElementType();
+  std::string type_str = MLIRType2CUDATypeStr(result_type);
+
+  std::string result_name = EmitUniqueName("dyn_bcast_indim");
+
+  assert(binding.count(result) == 0);
+  binding[result] = result_name;
+
+  return type_str + " " + result_name + " = " + expression.value();
+}
+
+llvm::Optional<std::string> SourceEmitterCUDA::EmitOp(
+    Operation* op, ValueNameBinding& binding) {
+  if (isa<lmhlo::AbsOp, lmhlo::CeilOp, lmhlo::ConvertOp, lmhlo::CosineOp,
+          lmhlo::ExpOp, lmhlo::FloorOp, lmhlo::IsFiniteOp, lmhlo::LogOp,
+          lmhlo::Log1pOp, lmhlo::NegOp, lmhlo::NotOp, lmhlo::RsqrtOp,
+          lmhlo::SqrtOp, lmhlo::TanhOp>(op)) {
+    return EmitElemWiseUnaryOp(op, binding);
+  } else if (isa<lmhlo::AddOp, lmhlo::SubtractOp, lmhlo::MulOp, lmhlo::DivOp,
+                 lmhlo::MaxOp, lmhlo::MinOp, lmhlo::CompareOp, lmhlo::AndOp,
+                 lmhlo::OrOp, lmhlo::RemOp, lmhlo::PowOp>(op)) {
+    return EmitElemWiseBinaryOp(op, binding);
+  } else if (isa<lmhlo::SelectOp, lmhlo::ClampOp>(op)) {
+    return EmitElemWiseTernaryOp(op, binding);
+  } else if (isa<lmhlo::ConstantOp>(op)) {
+    return EmitScalarOrSplatConstantOp(op, binding);
+  } else if (isa<lmhlo::DynamicBroadcastInDimOp>(op)) {
+    return EmitBroadcastOfScalarOrSplatConstantOp(op, binding);
+  } else {
+    return llvm::None;
+  }
 }
 
 std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
@@ -474,17 +533,49 @@ std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
     existing_names_.try_emplace(op_str.str(), 0);
   }
   int32_t count = existing_names_[op_str.str()]++;
-  name += std::to_string(count);
+  name += "_" + std::to_string(count);
 
   return name;
 }
 
-void SourceEmitterCUDA::bindValueNames(SmallVectorImpl<Value> inputs,
-                                       SmallVectorImpl<std::string> names,
-                                       ValueNameBinding& binding) {
+void SourceEmitterCUDA::bindValueNames(
+    const SmallVectorImpl<Value>& inputs,
+    const SmallVectorImpl<std::string>& names, ValueNameBinding& binding) {
   assert(inputs.size() == names.size());
   for (int64_t i = 0; i < inputs.size(); i++) {
     binding[inputs[i]] = names[i];
+  }
+}
+
+bool SourceEmitterCUDA::isSupportedOp(Operation* op) {
+  if (isa<lmhlo::AbsOp, lmhlo::CeilOp, lmhlo::ConvertOp, lmhlo::CosineOp,
+          lmhlo::ExpOp, lmhlo::FloorOp, lmhlo::IsFiniteOp, lmhlo::LogOp,
+          lmhlo::Log1pOp, lmhlo::NegOp, lmhlo::NotOp, lmhlo::RsqrtOp,
+          lmhlo::SqrtOp, lmhlo::TanhOp>(op) ||
+      isa<lmhlo::AddOp, lmhlo::SubtractOp, lmhlo::MulOp, lmhlo::DivOp,
+          lmhlo::MaxOp, lmhlo::MinOp, lmhlo::CompareOp, lmhlo::AndOp,
+          lmhlo::OrOp, lmhlo::RemOp, lmhlo::PowOp>(op) ||
+      isa<lmhlo::SelectOp, lmhlo::ClampOp>(op)) {
+    return true;
+  } else if (isa<lmhlo::ConstantOp>(op)) {
+    lmhlo::ConstantOp constant = dyn_cast<lmhlo::ConstantOp>(op);
+    MemRefType memref_type = constant.getOutput().getType().cast<MemRefType>();
+    return memref_type.getRank() == 0 || constant.getValue().isSplat();
+  } else if (isa<lmhlo::DynamicBroadcastInDimOp>(op)) {
+    // Only deal with the case that the last rewriter in the same block is
+    // scalar or splat constant op.
+    auto input_op = findLastWriterInBlock(op->getOperand(0), op->getBlock());
+    if (!input_op.hasValue()) {
+      return false;
+    }
+    lmhlo::ConstantOp constant = dyn_cast<lmhlo::ConstantOp>(input_op.value());
+    if (!constant) {
+      return false;
+    }
+    MemRefType memref_type = constant.getOutput().getType().cast<MemRefType>();
+    return memref_type.getRank() == 0 || constant.getValue().isSplat();
+  } else {
+    return false;
   }
 }
 
