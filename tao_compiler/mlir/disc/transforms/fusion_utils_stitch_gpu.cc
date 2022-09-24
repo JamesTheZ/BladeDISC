@@ -11,6 +11,8 @@
 
 #include "tensorflow/compiler/mlir/disc/transforms/fusion_utils.h"
 
+#include "tensorflow/compiler/mlir/disc/disc_util.h"
+
 namespace mlir {
 namespace disc_ral {
 

@@ -367,9 +367,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   pm.addPass(disc_ral::createDiscAssignMemorySpacePass("main", gpu_enabled));
 
   // Enable stitch by default on CPU.
-  bool enable_stitch = !gpu_enabled;
-  tensorflow::ReadBoolFromEnvVar("DISC_ENABLE_STITCH", !gpu_enabled,
-                                 &enable_stitch);
+  bool enable_stitch = !gpu_enabled || isStitchEnabled();
   if (enable_shape_constraint_ir) {
     pm.addNestedPass<FuncOp>(
         disc_ral::createDiscDuplicateComputationForFusionPass(
@@ -391,8 +389,10 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
     pm.addNestedPass<FuncOp>(
         disc_ral::createDiscMemRefLoadStoreSimplifierPass());
   }
-  pm.addNestedPass<FuncOp>(disc_ral::createDiscFusionPass(
-      gpu_enabled, enable_stitch ? "stitch" : "base"));
+  std::string fusion_strategy =
+      isDotFusionEnabled() ? "dot" : (enable_stitch ? "stitch" : "base");
+  pm.addNestedPass<FuncOp>(
+      disc_ral::createDiscFusionPass(gpu_enabled, fusion_strategy));
   if (gpu_enabled) {
     // TODO: Support cpu stitch with splat const
     pm.addNestedPass<FuncOp>(disc_ral::createDiscFuseSplatConstPass());

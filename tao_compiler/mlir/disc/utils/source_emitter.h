@@ -15,7 +15,7 @@ class SourceEmitterCUDA {
   using ValueNameBinding = llvm::DenseMap<Value, std::string>;
 
  public:
-  bool isSupportedOp(Operation* op);
+  static bool isSupportedOp(Operation* op);
 
   llvm::Optional<std::string> EmitOp(Operation* op, ValueNameBinding& binding);
 

@@ -114,6 +114,8 @@ enum FusionType {
   kStitch,
   // A schedule for concat op having many operands.
   kLargeConcat,
+  // Dot with epilogues
+  kDot
 };
 
 FusionType getFusionType(Operation* op);
@@ -148,11 +150,6 @@ bool isRank2ColReduction(Operation* op);
 // Returns true if the op is supported by the downstreaming fusion codegen
 // engine.
 bool isFusible(Operation* op);
-
-// Returns the number of operands that are supposed to be written.
-// For some ops (e.g. lmhlo ops), some operands are the output memrefs
-// Thus these operands are supposed to be updated.
-int getNumResultOperands(Operation* op);
 
 // Returns data users of the value and its aliases (e.g. memref.cast).
 // Here non-data users means DimOp, DeallocOp and ShapeOfOp.
@@ -362,6 +359,10 @@ class FusionPattern : public FusionPatternBase {
 };
 
 void dumpFusionPattern(FusionPattern& pattern);
+
+// The basic approch to init fusion pattern.
+bool initFusionPatternBase(ShapeAnalysis& shapeAnalysis,
+                           FusionPattern& fused_pattern);
 
 // Get skeleton-groups in which the op orders are the same with op list in the
 // given fusion pattern.
@@ -660,7 +661,39 @@ bool isFusionType(Operation* op) {
   return llvm::find(fusionTypes, fusionType) != fusionTypes.end();
 }
 
-bool isStitchFusion(Operation* op);
+class BaseFusionStrategy : public FusionStrategy {
+ public:
+  using FusionStrategy::FusionStrategy;
+
+  using FusionStrategy::isFusible;
+  bool isFusible(FusionPattern& fusion_pattern) override;
+  bool tryFuse(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,
+               FusionPattern& rhs, FusionPattern& target) override;
+  bool initFusionPattern(ShapeAnalysis& shapeAnalysis,
+                         FusionPattern& fusion_pattern) override;
+  virtual StringRef getName() override { return "BaseFusionStrategy"; }
+
+ protected:
+  virtual Value getEffectiveShape(FusionPattern& target, Value value) = 0;
+  virtual bool checkSameShape(FusionPattern& lhs, FusionPattern& rhs,
+                              FusionPattern& target) {
+    return false;
+  }
+};
+
+class BaseGpuFusionStrategy : public BaseFusionStrategy {
+ public:
+  using BaseFusionStrategy::BaseFusionStrategy;
+
+  bool isFusible(Operation* op) override;
+  bool checkSameShape(FusionPattern& lhs, FusionPattern& rhs,
+                      FusionPattern& target) {
+    return lhs.isKInputFusion() && rhs.isKInputFusion();
+  }
+
+  Value getEffectiveShape(FusionPattern& target, Value v) override;
+  virtual StringRef getName() override { return "BaseGpuFusionStrategy"; }
+};
 
 class StitchGpuFusionStrategy : public FusionStrategy {
  public:
@@ -683,6 +716,25 @@ class StitchGpuFusionStrategy : public FusionStrategy {
   bool tileXroots(ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern);
   bool backtraceTileAndCover(ShapeAnalysis& shapeAnalysis,
                              FusionPattern& fusion_pattern, Value value);
+};
+
+class DotGpuFusionStrategy : public FusionStrategy {
+ public:
+  DotGpuFusionStrategy(const FusionOptions& options)
+      : FusionStrategy(options) {}
+
+  virtual bool isFusible(Operation* op) override;
+  // virtual bool isFusible(FusionPattern& fused_pattern) override;
+  virtual bool initFusionPattern(ShapeAnalysis& shapeAnalysis,
+                                 FusionPattern& fused_pattern) override;
+
+  virtual bool tryFuse(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,
+                       FusionPattern& rhs, FusionPattern& target) override;
+
+  virtual StringRef getName() override { return "DotGpuFusionStrategy"; }
+
+ private:
+  SmallVector<Value> getEffectiveOperands(Operation* op);
 };
 
 }  // namespace disc_ral

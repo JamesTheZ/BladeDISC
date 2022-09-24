@@ -27,6 +27,10 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/disc/utils/cycle_detector.h"
 #include "tensorflow/core/util/env_var.h"
 
+#if 1
+#include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
+#endif
+
 // This pass has similar functionality of the fusion pass in XLA stack.
 // However, unlike XLA, it targets the fully dynamic shape scenario.
 // Currently, it implements the kLoop and kInput fusion templates.
@@ -528,6 +532,13 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
         pipeline.emplace_back(
             makeNewPlacementAwareFusionStrategy(gpu_enabled_, "base"));
       }
+    } else if (gpu_enabled_ && fusion_strategy_ == "dot") {
+      pipeline.emplace_back(
+          makeNewPlacementAwareFusionStrategy(gpu_enabled_, "dot"));
+      pipeline.emplace_back(
+          makeNewPlacementAwareFusionStrategy(gpu_enabled_, "base"));
+      pipeline.emplace_back(
+          makeNewPlacementAwareFusionStrategy(gpu_enabled_, "stitch"));
     }
     return pipeline;
   }
@@ -614,6 +625,30 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
       } while (nameSet.count(name));
       setFusionName(b, op, name);
     });
+#if 1
+    func.walk([&](FusionOp op) {
+      FusionPatternBase pattern(op);
+      auto operands = pattern.getOperands();
+      llvm::errs() << "[ZZ] the fusion:\n" << op << "\n";
+      SourceEmitterCUDA source_emitter;
+      SourceEmitterCUDA::ValueNameBinding binding;
+      SmallVector<std::string> operand_names;
+      for (int64_t i = 0; i < operands.size(); i++) {
+        operand_names.push_back("in_" + std::to_string(i));
+      }
+      source_emitter.bindValueNames(operands, operand_names, binding);
+      for (auto op : pattern.getOpList()) {
+        std::string code;
+        if (source_emitter.isSupportedOp(op)) {
+          code = source_emitter.EmitOp(op, binding).value();
+        } else {
+          llvm::errs() << "[ZZ] unsupported op " << *op << "\n";
+        }
+        // llvm::errs() << "Code for " << *op << " is:\n\t" << code << ";\n";
+        llvm::errs() << code << ";\n";
+      }
+    });
+#endif
   }
 
   bool ApplyFusionPlan(FusionPlan& plan) {
