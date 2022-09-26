@@ -249,6 +249,9 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDiscConvertFakeQuantOpPass();
 std::unique_ptr<OperationPass<func::FuncOp>>
 createDiscLowerQuantizeAndDequantizePass();
 
+// Convert kDot fusion to the call of FuncOp.
+std::unique_ptr<OperationPass<ModuleOp>> createDiscDotFusionToFuncPass();
+
 }  // namespace disc_ral
 }  // namespace mlir
 

@@ -125,7 +125,7 @@ bool DotGpuFusionStrategy::tryFuse(ShapeAnalysis& shapeAnalysis,
   // TODO: ConstantOp is allowed to be fused as the output op temporarily, which
   // will be moved out in a later pass.
 
-  LLVM_DEBUG(llvm::dbgs() << "FusionStrategy::tryFuse success()\n");
+  LLVM_DEBUG(llvm::dbgs() << "DotGpuFusionStrategy::tryFuse success()\n");
   return true;
 }
 

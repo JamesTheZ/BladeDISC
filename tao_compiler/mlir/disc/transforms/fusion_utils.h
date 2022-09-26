@@ -201,11 +201,11 @@ class FusionPatternBase {
   SmallVector<Operation*, 4>& getRootOps() { return root_ops_; }
 
   // Returns values that are outputs of any lmhlo op in the fused pattern and
-  // are only consumed by the lmhlo ops outside the fused pattern.
+  // are only consumed by the lmhlo ops inside the fused pattern.
   FusionValueList& getInternalResults() { return internal_results_; }
 
   // Returns values that are outputs of any lmhlo op in the fused pattern and
-  // are only consumed by the lmhlo ops inside the fused pattern.
+  // are only consumed by the lmhlo ops outside the fused pattern.
   FusionValueList& getExternalOnlyResults() { return external_only_results_; }
 
   // Returns the size of the ops this fusion pattern contains.

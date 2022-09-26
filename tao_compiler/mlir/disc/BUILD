@@ -756,6 +756,7 @@ cc_library(
     hdrs = ["transforms/passes.h"],
     deps = [
         ":disc_ral",
+        ":disc_util",
         ":pass_details",
         ":placement_utils",
         "//tensorflow/compiler/mlir/xla/ral:compile_metadata",
@@ -1808,6 +1809,24 @@ cc_library(
 )
 
 cc_library(
+    name = "disc_dot_fusion_to_func",
+    srcs = ["transforms/disc_dot_fusion_to_func.cc"],
+    deps = [
+        ":fusion_utils",
+        ":pass_details",
+        # "//tensorflow/compiler/xla/mlir_hlo:mlir_hlo",
+        # "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        # "@llvm-project//mlir:ShapeDialect",
+        "@llvm-project//mlir:Support",
+        # "@llvm-project//mlir:TensorDialect",
+        # "@llvm-project//mlir:Transforms",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "all_passes",
     hdrs = [
         "transforms/register_passes.h",
@@ -1824,6 +1843,7 @@ cc_library(
         ":disc_assign_memory_space",
         ":disc_canonicalizer",
         ":disc_dense_to_sparse",
+        ":disc_dot_fusion_to_func",
         ":disc_convert_const_to_ral",
         ":disc_convert_fake_quant_op",
         ":disc_cpu_map_parallel_loop",

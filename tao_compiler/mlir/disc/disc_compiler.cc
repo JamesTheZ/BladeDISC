@@ -393,6 +393,8 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
       isDotFusionEnabled() ? "dot" : (enable_stitch ? "stitch" : "base");
   pm.addNestedPass<FuncOp>(
       disc_ral::createDiscFusionPass(gpu_enabled, fusion_strategy));
+  // TODO: move out constant result of kDot fusion.
+  pm.addPass(disc_ral::createDiscDotFusionToFuncPass());
   if (gpu_enabled) {
     // TODO: Support cpu stitch with splat const
     pm.addNestedPass<FuncOp>(disc_ral::createDiscFuseSplatConstPass());

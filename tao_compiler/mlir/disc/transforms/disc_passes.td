@@ -43,7 +43,8 @@ def DiscLhloLegalizeRootsToParallelLoopsPass : Pass<"disc-lhlo-legalize-roots-to
     "mlir::memref::MemRefDialect",
     "mlir::math::MathDialect",
     "gpu::GPUDialect",
-    "disc_shape::DISCShapeDialect"
+    "disc_shape::DISCShapeDialect",
+    "mlir::lmhlo_disc::LmhloDiscDialect"
   ];
 }
 
@@ -470,4 +471,9 @@ def DiscLowerQuantizeAndDequantizePass : Pass<"disc-lower-quantize-and-dequantiz
       "shape::ShapeDialect",
       "mhlo::MhloDialect",
   ];
+}
+
+def DiscDotFusionToFuncPass : Pass<"disc-dot-fusion-to-func", "ModuleOp"> {
+  let summary = "Pass to convert kDot fusion to func-op.";
+  let constructor = "createDiscDotFusionToFuncPass()";
 }
