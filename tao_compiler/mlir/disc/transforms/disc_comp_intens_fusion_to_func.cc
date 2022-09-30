@@ -10,57 +10,27 @@
 // limitations under the License.
 
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
-// #include "mlir-hlo/utils/codegen_utils.h"
-// #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-// #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BlockAndValueMapping.h"
-// #include "mlir/IR/MLIRContext.h"  // TF:llvm-project
-#include "mlir/Pass/Pass.h"  // TF:local_config_mlir
+#include "mlir/Pass/Pass.h"
 #include "tensorflow/compiler/mlir/disc/disc_util.h"
 #include "tensorflow/compiler/mlir/disc/transforms/PassDetail.h"
-// #include "tensorflow/compiler/mlir/disc/transforms/codegen_utils.h"
 #include "tensorflow/compiler/mlir/disc/transforms/fusion_utils.h"
-// #include "tensorflow/compiler/mlir/disc/transforms/placement_utils.h"
-// #include "tensorflow/core/util/env_var.h"
 
 namespace mlir {
 namespace disc_ral {
 namespace {
 
-// using lmhlo::FusionOp;
-
-// struct DiscStripShapeConstraintOpsPass
-//     : public DiscStripShapeConstraintOpsPassBase<
-//           DiscStripShapeConstraintOpsPass> {
-//   void runOnOperation() override {
-//     SmallVector<disc_shape::SymbolicDimOp> ops;
-//     getOperation().walk(
-//         [&](disc_shape::SymbolicDimOp op) { ops.push_back(op); });
-//     for (disc_shape::SymbolicDimOp op : ops) {
-//       op->erase();
-//     }
-//     StringRef funcName =
-//     SymbolicDimMgr::getShapeConstraintGraphFunctionName();
-//     // first try to remove the old shape constraint graph
-//     if (auto func = getOperation().lookupSymbol<func::FuncOp>(funcName))
-//       func->erase();
-//   }
-// };
-
-struct DiscDotFusionToFuncPass
-    : public DiscDotFusionToFuncPassBase<DiscDotFusionToFuncPass> {
+struct DiscCompIntenFusionToFuncPass
+    : public DiscCompIntenFusionToFuncPassBase<DiscCompIntenFusionToFuncPass> {
  public:
-  // explicit DiscDotFusionToFuncPass()
-  //     : DiscDotFusionToFuncPassBase<DiscDotFusionToFuncPass>::
-  //           DiscDotFusionToFuncPassBase() {}
   void runOnOperation() override;
 
  private:
-  void convertKDotFusionToFunc(lmhlo::FusionOp op);
+  void convertKCompIntenFusionToFunc(lmhlo::FusionOp op);
 };
 
-void DiscDotFusionToFuncPass::runOnOperation() {
+void DiscCompIntenFusionToFuncPass::runOnOperation() {
   ModuleOp module_op = getOperation();
 
   SmallVector<lmhlo::FusionOp> kdot_fusions;
@@ -71,11 +41,12 @@ void DiscDotFusionToFuncPass::runOnOperation() {
   });
 
   for (auto op : kdot_fusions) {
-    convertKDotFusionToFunc(op);
+    convertKCompIntenFusionToFunc(op);
   }
 }
 
-void DiscDotFusionToFuncPass::convertKDotFusionToFunc(lmhlo::FusionOp op) {
+void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
+    lmhlo::FusionOp op) {
   auto parent_func = op->getParentOfType<func::FuncOp>();
   OpBuilder builder(parent_func);
   Location loc = parent_func.getLoc();
@@ -127,8 +98,8 @@ void DiscDotFusionToFuncPass::convertKDotFusionToFunc(lmhlo::FusionOp op) {
 
   builder.create<func::ReturnOp>(loc);
 
-  fusion_func->setAttr(kFuncDotFusionAttr,
-                       builder.getIntegerAttr(builder.getIntegerType(1), 1));
+  fusion_func->setAttr(kFuncCompIntenFusionAttr,
+                       builder.getStringAttr("dot_fusion"));
 
   // Create call op.
   OpBuilder builder_call(op);
@@ -139,8 +110,8 @@ void DiscDotFusionToFuncPass::convertKDotFusionToFunc(lmhlo::FusionOp op) {
 
 }  // namespace
 
-std::unique_ptr<OperationPass<ModuleOp>> createDiscDotFusionToFuncPass() {
-  return std::make_unique<DiscDotFusionToFuncPass>();
+std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntenFusionToFuncPass() {
+  return std::make_unique<DiscCompIntenFusionToFuncPass>();
 }
 
 }  // namespace disc_ral

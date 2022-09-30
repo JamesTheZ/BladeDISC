@@ -599,6 +599,10 @@ struct DiscLowerToLibraryCallPass
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+    // skip kdot fusion func.
+    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
+      return;
+    }
     MLIRContext* context = &getContext();
     RewritePatternSet patterns(context);
     // clang-format off

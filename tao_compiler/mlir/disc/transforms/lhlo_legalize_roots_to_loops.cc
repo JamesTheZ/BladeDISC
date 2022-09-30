@@ -4103,7 +4103,7 @@ class DiscLhloLegalizeRootsToParallelLoops
     func::FuncOp func = getOperation();
 
     // skip kdot fusion func.
-    if (func->getAttrOfType<IntegerAttr>(kFuncDotFusionAttr)) {
+    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
       return;
     }
 

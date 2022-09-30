@@ -43,8 +43,7 @@ def DiscLhloLegalizeRootsToParallelLoopsPass : Pass<"disc-lhlo-legalize-roots-to
     "mlir::memref::MemRefDialect",
     "mlir::math::MathDialect",
     "gpu::GPUDialect",
-    "disc_shape::DISCShapeDialect",
-    "mlir::lmhlo_disc::LmhloDiscDialect"
+    "disc_shape::DISCShapeDialect"
   ];
 }
 
@@ -473,7 +472,20 @@ def DiscLowerQuantizeAndDequantizePass : Pass<"disc-lower-quantize-and-dequantiz
   ];
 }
 
-def DiscDotFusionToFuncPass : Pass<"disc-dot-fusion-to-func", "ModuleOp"> {
-  let summary = "Pass to convert kDot fusion to func-op.";
-  let constructor = "createDiscDotFusionToFuncPass()";
+def DiscCompIntenFusionToFuncPass : Pass<"disc-compute-intensive-fusion-to-func", "ModuleOp"> {
+  let summary = "Pass to convert compute-intensive fusion to func-op.";
+  let constructor = "createDiscCompIntenFusionToFuncPass()";
 }
+
+def DiscCompIntenFusionToCUDASourcePass : Pass<"disc-compute-intensive-fusion-to-cuda-source", "ModuleOp"> {
+  let summary = "Pass to convert functions representing compute-intensive "
+                "fusion into CUDA source code.";
+  let constructor = "createDiscCompIntenFusionToCUDASourcePass()";
+  let options = [
+    Option<"cc_major_", "gpu-sm-cc-major", "int",
+            /*default=*/"8", "gpu sm cc_major.">,
+    Option<"cc_minor_", "gpu-sm-cc-minor", "int",
+            /*default=*/"0", "gpu sm cc_minor.">,
+  ];
+}
+

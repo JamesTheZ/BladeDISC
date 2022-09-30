@@ -249,8 +249,13 @@ std::unique_ptr<OperationPass<func::FuncOp>> createDiscConvertFakeQuantOpPass();
 std::unique_ptr<OperationPass<func::FuncOp>>
 createDiscLowerQuantizeAndDequantizePass();
 
-// Convert kDot fusion to the call of FuncOp.
-std::unique_ptr<OperationPass<ModuleOp>> createDiscDotFusionToFuncPass();
+// Convert compute-intensive fusion to the call of FuncOp.
+std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntenFusionToFuncPass();
+
+// Convert the functions representing compute-intensive fusion into CUDA source
+// code.
+std::unique_ptr<OperationPass<ModuleOp>>
+createDiscCompIntenFusionToCUDASourcePass(int cc_major = 8, int cc_minor = 0);
 
 }  // namespace disc_ral
 }  // namespace mlir
