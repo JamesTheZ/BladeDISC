@@ -237,7 +237,7 @@ bool isStitchEnabled() {
   return enabled;
 }
 
-bool isDotFusionEnabled() {
+bool isCompIntenFusionEnabled() {
   static bool enabled = []() {
     bool enabled = false;
     tensorflow::ReadBoolFromEnvVar("DISC_ENABLE_DOT_FUSE", enabled, &enabled);

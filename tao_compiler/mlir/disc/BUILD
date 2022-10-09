@@ -1809,11 +1809,33 @@ cc_library(
 )
 
 cc_library(
-    name = "disc_dot_fusion_to_func",
-    srcs = ["transforms/disc_dot_fusion_to_func.cc"],
+    name = "disc_comp_intens_fusion_to_func",
+    srcs = ["transforms/disc_comp_intens_fusion_to_func.cc"],
     deps = [
         ":fusion_utils",
         ":pass_details",
+        # "//tensorflow/compiler/xla/mlir_hlo:mlir_hlo",
+        # "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        # "@llvm-project//mlir:ShapeDialect",
+        "@llvm-project//mlir:Support",
+        # "@llvm-project//mlir:TensorDialect",
+        # "@llvm-project//mlir:Transforms",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "disc_comp_intens_fusion_to_cuda_source",
+    srcs = ["transforms/disc_comp_intens_fusion_to_cuda_source.cc"],
+    deps = [
+        # ":fusion_utils",
+        # ":lmhlo_disc",
+        ":disc_util",
+        ":pass_details",
+        ":source_emitter",
+        "//tensorflow/compiler/xla/mlir_hlo:lhlo",
         # "//tensorflow/compiler/xla/mlir_hlo:mlir_hlo",
         # "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -1843,7 +1865,8 @@ cc_library(
         ":disc_assign_memory_space",
         ":disc_canonicalizer",
         ":disc_dense_to_sparse",
-        ":disc_dot_fusion_to_func",
+        ":disc_comp_intens_fusion_to_cuda_source",
+        ":disc_comp_intens_fusion_to_func",
         ":disc_convert_const_to_ral",
         ":disc_convert_fake_quant_op",
         ":disc_cpu_map_parallel_loop",

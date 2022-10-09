@@ -166,4 +166,19 @@ def LHLODISC_SparseReshapeOp : LHLODISC_Op<"sparse_reshape", []> {
   );
 }
 
+def LHLODISC_SourceCodeFuncOp: LHLODISC_Op<"source_code_func", [AttrSizedOperandSegments]> {
+  let summary = "Source code func operator";
+  let description = [{
+    It maintains the source code and the corresponding operands/results of the
+    code. The order of {args, output} are the same with that of the source code.
+  }];
+  let arguments = (ins
+    Arg<Variadic<LHLO_BufferOrIndexBuffer>, "", [MemRead]>:$args,
+    Arg<Variadic<LHLO_BufferOrIndexBuffer>, "", [MemWrite]>:$output,
+    StrAttr:$code,
+    StrAttr:$call_target_name
+  );
+}
+
+
 #endif // LMHLO_DISC_OPS

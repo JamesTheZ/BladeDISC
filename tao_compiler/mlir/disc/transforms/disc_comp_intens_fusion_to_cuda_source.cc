@@ -12,8 +12,9 @@
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-// #include "mlir/IR/BlockAndValueMapping.h"
+#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/Pass/Pass.h"
+#include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
 #include "tensorflow/compiler/mlir/disc/disc_util.h"
 #include "tensorflow/compiler/mlir/disc/transforms/PassDetail.h"
 #include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
@@ -354,6 +355,7 @@ struct DiscCompIntenFusionToCUDASourcePass
  private:
   bool generateCUDASourceForCompIntenFusionFunc(func::FuncOp func);
   void deadArgumentElimination(func::FuncOp func);
+
   bool isHeavyEpilogue(func::FuncOp func);
   bool getCUDATypeString(Type type, std::string& type_str);
   bool getLayoutStrings(const mhlo::DotDimensionNumbersAttr& dimension_numbers,
@@ -372,165 +374,8 @@ struct DiscCompIntenFusionToCUDASourcePass
                                std::string& permute_d_layout);
 
   void getResults(func::FuncOp func, SmallVector<Value>& results);
+  void getEffectiveOperands(func::FuncOp func, SmallVector<Value>& operands);
 };
-
-void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
-  ModuleOp module_op = getOperation();
-
-  SmallVector<func::FuncOp> comp_inten_fusions;
-  module_op->walk([&](func::FuncOp func) {
-    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
-      comp_inten_fusions.push_back(func);
-    }
-  });
-
-  for (auto func : comp_inten_fusions) {
-    generateCUDASourceForCompIntenFusionFunc(func);
-    deadArgumentElimination(func);
-  }
-}
-
-bool DiscCompIntenFusionToCUDASourcePass::
-    generateCUDASourceForCompIntenFusionFunc(func::FuncOp func) {
-  std::string cuda_code = gemm_fusion_template;
-
-  // Values to obtain according to func.
-  std::string specialized_class_name;
-  std::string specialized_epilogue;
-  std::string epilogue_is_heavy;
-  std::string element_a_type;
-  std::string element_a_layout;
-  std::string element_b_type;
-  std::string element_b_layout;
-  std::string element_output_type;
-  std::string element_output_layout;
-  std::string element_accumulator_type;
-  std::string operator_class_type;
-  std::string sm_arch;
-  std::string scale_kind;
-  std::string count_vectorized;
-  std::string epilogue_type;
-  std::string gather_a;
-  std::string gather_b;
-  std::string scatter_d;
-  std::string permute_d_layout;
-  std::string gemm_fusion_func_name;
-
-  gemm_fusion_func_name = func.getName();
-  specialized_class_name = gemm_fusion_func_name + "_specialized";
-
-  specialized_epilogue = "";
-
-  epilogue_is_heavy = isHeavyEpilogue(func) ? "true" : "false";
-
-  SmallVector<Operation*> gemms;
-  func->walk([&](lmhlo::DotGeneralOp op) { gemms.push_back(op); });
-  // Currently, we only deal with the fusion with a single GEMM.
-  assert(gemms.size() == 1 && "GEMM number in kDot fusion is not 1.");
-  lmhlo::DotGeneralOp dot = dyn_cast<lmhlo::DotGeneralOp>(gemms[0]);
-  Value A = dot->getOperand(0);
-  Value B = dot->getOperand(1);
-  Value D = dot->getOperand(2);
-  auto a_type = A.getType().dyn_cast<MemRefType>();
-  auto b_type = B.getType().dyn_cast<MemRefType>();
-  auto d_type = D.getType().dyn_cast<MemRefType>();
-
-  if (!getCUDATypeString(a_type.getElementType(), element_a_type) ||
-      !getCUDATypeString(b_type.getElementType(), element_b_type) ||
-      !getCUDATypeString(d_type.getElementType(), element_output_type)) {
-    return false;
-  }
-  SmallVector<std::string> layouts;
-  if (!getLayoutStrings(dot.getDotDimensionNumbers(), layouts)) {
-    return false;
-  }
-  element_a_layout = layouts[0];
-  element_b_layout = layouts[1];
-  element_output_layout = layouts[2];
-
-  if (!getAccumulatorTypeString(d_type.getElementType(),
-                                element_accumulator_type) ||
-      !getOperatorClassTypeString(operator_class_type) ||
-      !getSMArchString(sm_arch) || !getScaleKindString(scale_kind) ||
-      !getCountVectorizedString(element_output_type, count_vectorized) ||
-      !getPermuteDLayoutString(func, permute_d_layout)) {
-    return false;
-  }
-
-  // TODO: support more epilogue types.
-  epilogue_type = element_output_type;
-  gather_a = isGatherA(func) ? "true" : "false";
-  gather_b = isGatherB(func) ? "true" : "false";
-  scatter_d = isScatterD(func) ? "true" : "false";
-
-  std::string intent = "       ";
-  SourceEmitterCUDA source_emitter;
-  SourceEmitterCUDA::ValueNameBinding binding;
-  for (auto& op : func.getRegion().getOps()) {
-    if (isa<lmhlo::DotGeneralOp>(&op)) {
-      source_emitter.bindValueNames(SmallVector<Value>({op.getOperand(2)}),
-                                    SmallVector<std::string>({"input"}),
-                                    binding);
-    } else if (!isa<func::ReturnOp>(&op)) {
-      assert(source_emitter.isSupportedOp(&op) && "Encounter unsupported op.");
-      auto instruction = source_emitter.EmitOp(&op, binding);
-      if (!instruction.hasValue()) {
-        return false;
-      } else {
-        specialized_epilogue += intent + instruction.value() + "\n";
-      }
-    }
-  }
-  // Append return instruction.
-  SmallVector<Value> results;
-  getResults(func, results);
-  // Only support one result currently.
-  if (results.size() != 1) {
-    return false;
-  }
-  std::string result_name = binding[results[0]];
-  specialized_epilogue += intent + "return " + result_name + ";";
-
-  // Replace newly generated code in the template.
-  stringReplaceInplace(cuda_code, kSpecializedClassName, specialized_class_name,
-                       true);
-  stringReplaceInplace(cuda_code, kSpecializedEpilogue, specialized_epilogue,
-                       true);
-  stringReplaceInplace(cuda_code, kEpilogueIsHeavy, epilogue_is_heavy, true);
-  stringReplaceInplace(cuda_code, kElementAType, element_a_type, true);
-  stringReplaceInplace(cuda_code, kElementALayout, element_a_layout, true);
-  stringReplaceInplace(cuda_code, kElementBType, element_b_type, true);
-  stringReplaceInplace(cuda_code, kElementBLayout, element_b_layout, true);
-  stringReplaceInplace(cuda_code, kElementOutputType, element_output_type,
-                       true);
-  stringReplaceInplace(cuda_code, kElementOutputLayout, element_output_layout,
-                       true);
-  stringReplaceInplace(cuda_code, kElementAccumulatorType,
-                       element_accumulator_type, true);
-  stringReplaceInplace(cuda_code, kOperatorClassType, operator_class_type,
-                       true);
-  stringReplaceInplace(cuda_code, kSMArch, sm_arch, true);
-  stringReplaceInplace(cuda_code, kScaleKind, scale_kind, true);
-  stringReplaceInplace(cuda_code, kCountVectorized, count_vectorized, true);
-  stringReplaceInplace(cuda_code, kEpilogueType, epilogue_type, true);
-  stringReplaceInplace(cuda_code, kGatherA, gather_a, true);
-  stringReplaceInplace(cuda_code, kGatherB, gather_b, true);
-  stringReplaceInplace(cuda_code, kScatterD, scatter_d, true);
-  stringReplaceInplace(cuda_code, kPermuteDLayout, permute_d_layout, true);
-  stringReplaceInplace(cuda_code, kGemmFusionFuncName, gemm_fusion_func_name,
-                       true);
-
-#if 1
-  llvm::errs() << "[ZZ] generated cuda code: " << cuda_code << "\n";
-#endif
-
-  // TODO: rewrite the func.
-
-  return true;
-}
-
-void DiscCompIntenFusionToCUDASourcePass::deadArgumentElimination(
-    func::FuncOp func) {}
 
 bool DiscCompIntenFusionToCUDASourcePass::isHeavyEpilogue(func::FuncOp func) {
   // TODO: check whether it is heavy or not according to the logic in CUTLASS.
@@ -699,6 +544,344 @@ void DiscCompIntenFusionToCUDASourcePass::getResults(
       }
     }
   });
+}
+
+void DiscCompIntenFusionToCUDASourcePass::getEffectiveOperands(
+    func::FuncOp func, SmallVector<Value>& operands) {
+  DenseSet<Operation*> op_set;
+  auto ops = func.getRegion().getOps();
+  for (auto& op : func.getRegion().getOps()) {
+    op_set.insert(&op);
+  }
+
+  operands.clear();
+  func.walk([&](Operation* op) {
+    SmallVector<Value> ins;
+    if (isa<lmhlo::ConstantOp>(op)) {
+      // The constant op is splat constant, which should be checked in the
+      // fusion pass.
+      return;
+    } else {
+      // The broadcast-in-dim reads constant op, which should be check in the
+      // fusion pass.
+      int num_input_operand =
+          isa<lmhlo::DynamicBroadcastInDimOp>(op)
+              ? 1
+              : op->getNumOperands() - getNumResultOperands(op);
+      for (Value v : op->getOperands().take_front(num_input_operand)) {
+        bool has_internal_writter = false;
+        for (Operation* user : getValueUsers(v)) {
+          if (op == user) {
+            continue;
+          }
+          if (op_set.contains(user) && IsOpWriteValue(user, v)) {
+            has_internal_writter = true;
+            break;
+          }
+        }
+        if (!has_internal_writter) {
+          operands.emplace_back(v);
+        }
+      }
+    }
+  });
+}
+
+bool DiscCompIntenFusionToCUDASourcePass::
+    generateCUDASourceForCompIntenFusionFunc(func::FuncOp func) {
+  std::string cuda_code = gemm_fusion_template;
+
+  // Values to obtain according to func.
+  std::string specialized_class_name;
+  std::string specialized_epilogue;
+  std::string epilogue_is_heavy;
+  std::string element_a_type;
+  std::string element_a_layout;
+  std::string element_b_type;
+  std::string element_b_layout;
+  std::string element_output_type;
+  std::string element_output_layout;
+  std::string element_accumulator_type;
+  std::string operator_class_type;
+  std::string sm_arch;
+  std::string scale_kind;
+  std::string count_vectorized;
+  std::string epilogue_type;
+  std::string gather_a;
+  std::string gather_b;
+  std::string scatter_d;
+  std::string permute_d_layout;
+  std::string gemm_fusion_func_name;
+
+  gemm_fusion_func_name = func.getName();
+  specialized_class_name = gemm_fusion_func_name + "_specialized";
+
+  specialized_epilogue = "";
+
+  epilogue_is_heavy = isHeavyEpilogue(func) ? "true" : "false";
+
+  SmallVector<Operation*> gemms;
+  func->walk([&](lmhlo::DotGeneralOp op) { gemms.push_back(op); });
+  // Currently, we only deal with the fusion with a single GEMM.
+  assert(gemms.size() == 1 && "GEMM number in kDot fusion is not 1.");
+  lmhlo::DotGeneralOp dot = dyn_cast<lmhlo::DotGeneralOp>(gemms[0]);
+  Value A = dot->getOperand(0);
+  Value B = dot->getOperand(1);
+  Value D = dot->getOperand(2);
+  auto a_type = A.getType().dyn_cast<MemRefType>();
+  auto b_type = B.getType().dyn_cast<MemRefType>();
+  auto d_type = D.getType().dyn_cast<MemRefType>();
+
+  if (!getCUDATypeString(a_type.getElementType(), element_a_type) ||
+      !getCUDATypeString(b_type.getElementType(), element_b_type) ||
+      !getCUDATypeString(d_type.getElementType(), element_output_type)) {
+    return false;
+  }
+  SmallVector<std::string> layouts;
+  if (!getLayoutStrings(dot.getDotDimensionNumbers(), layouts)) {
+    return false;
+  }
+  element_a_layout = layouts[0];
+  element_b_layout = layouts[1];
+  element_output_layout = layouts[2];
+
+  if (!getAccumulatorTypeString(d_type.getElementType(),
+                                element_accumulator_type) ||
+      !getOperatorClassTypeString(operator_class_type) ||
+      !getSMArchString(sm_arch) || !getScaleKindString(scale_kind) ||
+      !getCountVectorizedString(element_output_type, count_vectorized) ||
+      !getPermuteDLayoutString(func, permute_d_layout)) {
+    return false;
+  }
+
+  // TODO: support more epilogue types.
+  epilogue_type = element_output_type;
+  gather_a = isGatherA(func) ? "true" : "false";
+  gather_b = isGatherB(func) ? "true" : "false";
+  scatter_d = isScatterD(func) ? "true" : "false";
+
+  std::string intent = "       ";
+  SourceEmitterCUDA source_emitter;
+  SourceEmitterCUDA::ValueNameBinding binding;
+  for (auto& op : func.getRegion().getOps()) {
+    if (isa<lmhlo::DotGeneralOp>(&op)) {
+      source_emitter.bindValueNames(SmallVector<Value>({op.getOperand(2)}),
+                                    SmallVector<std::string>({"input"}),
+                                    binding);
+    } else if (!isa<func::ReturnOp>(&op)) {
+      assert(source_emitter.isSupportedOp(&op) && "Encounter unsupported op.");
+      auto instruction = source_emitter.EmitOp(&op, binding);
+      if (!instruction.hasValue()) {
+        return false;
+      } else {
+        specialized_epilogue += intent + instruction.value() + "\n";
+      }
+    }
+  }
+  // Append return instruction.
+  SmallVector<Value> results;
+  getResults(func, results);
+  // Only support one result currently.
+  if (results.size() != 1) {
+    return false;
+  }
+  std::string result_name = binding[results[0]];
+  specialized_epilogue += intent + "return " + result_name + ";";
+
+  // Replace newly generated code in the template.
+  stringReplaceInplace(cuda_code, kSpecializedClassName, specialized_class_name,
+                       true);
+  stringReplaceInplace(cuda_code, kSpecializedEpilogue, specialized_epilogue,
+                       true);
+  stringReplaceInplace(cuda_code, kEpilogueIsHeavy, epilogue_is_heavy, true);
+  stringReplaceInplace(cuda_code, kElementAType, element_a_type, true);
+  stringReplaceInplace(cuda_code, kElementALayout, element_a_layout, true);
+  stringReplaceInplace(cuda_code, kElementBType, element_b_type, true);
+  stringReplaceInplace(cuda_code, kElementBLayout, element_b_layout, true);
+  stringReplaceInplace(cuda_code, kElementOutputType, element_output_type,
+                       true);
+  stringReplaceInplace(cuda_code, kElementOutputLayout, element_output_layout,
+                       true);
+  stringReplaceInplace(cuda_code, kElementAccumulatorType,
+                       element_accumulator_type, true);
+  stringReplaceInplace(cuda_code, kOperatorClassType, operator_class_type,
+                       true);
+  stringReplaceInplace(cuda_code, kSMArch, sm_arch, true);
+  stringReplaceInplace(cuda_code, kScaleKind, scale_kind, true);
+  stringReplaceInplace(cuda_code, kCountVectorized, count_vectorized, true);
+  stringReplaceInplace(cuda_code, kEpilogueType, epilogue_type, true);
+  stringReplaceInplace(cuda_code, kGatherA, gather_a, true);
+  stringReplaceInplace(cuda_code, kGatherB, gather_b, true);
+  stringReplaceInplace(cuda_code, kScatterD, scatter_d, true);
+  stringReplaceInplace(cuda_code, kPermuteDLayout, permute_d_layout, true);
+  stringReplaceInplace(cuda_code, kGemmFusionFuncName, gemm_fusion_func_name,
+                       true);
+
+#if 0
+  llvm::errs() << "[ZZ] generated cuda code: " << cuda_code << "\n";
+#endif
+
+  OpBuilder builder(func);
+  Location loc = func->getLoc();
+
+  // Create source code op containing the source code string.
+  SmallVector<Value> operands;
+  getEffectiveOperands(func, operands);
+  builder.setInsertionPointToStart(&func.getBody().front());
+  auto source_func = builder.create<lmhlo_disc::SourceCodeFuncOp>(
+      loc, llvm::None, operands, results, cuda_code, gemm_fusion_func_name);
+
+  const int32_t segments[2] = {static_cast<int32_t>(operands.size()),
+                               static_cast<int32_t>(results.size())};
+  auto segments_attr =
+      mlir::DenseI32ArrayAttr::get(source_func->getContext(), segments);
+  source_func->setAttr(source_func.getOperandSegmentSizeAttr(), segments_attr);
+
+  // Erase the converted ops.
+  SmallVector<Operation*> to_erase;
+  for (auto& op : func.getRegion().getOps()) {
+    if (!isa<func::ReturnOp, lmhlo_disc::SourceCodeFuncOp>(&op)) {
+      to_erase.emplace_back(&op);
+    }
+  }
+  for (auto op : to_erase) {
+    op->erase();
+  }
+
+  return true;
+}
+
+void DiscCompIntenFusionToCUDASourcePass::deadArgumentElimination(
+    func::FuncOp func) {
+  SmallVector<int32_t> effective_arg_pos;
+  SmallVector<Type> func_operand_types;
+  for (auto argument : llvm::enumerate(func.getArguments())) {
+    if (!getValueUsers(argument.value()).empty()) {
+      effective_arg_pos.push_back(argument.index());
+      func_operand_types.push_back(argument.value().getType());
+    }
+  }
+
+  // Create new func with effective arguments.
+  OpBuilder builder(func);
+  Location loc = func.getLoc();
+  FunctionType type =
+      FunctionType::get(builder.getContext(), func_operand_types, {});
+  auto new_func = builder.create<func::FuncOp>(loc, func.getName(), type);
+
+  BlockAndValueMapping mapper;
+  builder.setInsertionPointToEnd(new_func.addEntryBlock());
+  for (const auto& arg : enumerate(new_func.getArguments())) {
+    mapper.map(func.getArgument(effective_arg_pos[arg.index()]), arg.value());
+  }
+  for (auto& inst : func.getBody().getOps()) {
+    builder.clone(inst, mapper);
+  }
+  new_func->setAttr(kFuncCompIntenFusionAttr,
+                    func->getAttr(kFuncCompIntenFusionAttr));
+
+  //  create new call.
+  auto module_op = func->getParentOfType<ModuleOp>();
+  Optional<SymbolTable::UseRange> symbol_uses = func.getSymbolUses(module_op);
+  for (SymbolTable::SymbolUse symbol_use : *symbol_uses) {
+    Operation* user = symbol_use.getUser();
+    OpBuilder builder_call(user);
+    auto call = dyn_cast<func::CallOp>(user);
+    if (!call) {
+      continue;
+    }
+    SmallVector<Value> operands;
+    for (auto idx : effective_arg_pos) {
+      operands.push_back(call.getOperand(idx));
+    }
+    auto new_call = builder_call.create<func::CallOp>(loc, new_func.getName(),
+                                                      TypeRange({}), operands);
+    user->replaceAllUsesWith(new_call);
+    user->erase();
+  }
+
+  func->erase();
+}
+
+#if 0
+void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
+    lmhlo::FusionOp op) {
+  auto parent_func = op->getParentOfType<func::FuncOp>();
+  OpBuilder builder(parent_func);
+  Location loc = parent_func.getLoc();
+
+  FusionPatternBase fusion_pattern(op);
+  const auto& operands = fusion_pattern.getOperands();
+  const auto& results = fusion_pattern.getResults();
+  const auto& intermediate_buffers = fusion_pattern.getInternalResults();
+
+  // Prepare func type.
+  SmallVector<Value> func_operands;
+  SmallVector<Type> func_operand_types;
+  for (Value operand : operands) {
+    func_operands.push_back(operand);
+    func_operand_types.push_back(operand.getType());
+  }
+  for (Value result : results) {
+    func_operands.push_back(result);
+    func_operand_types.push_back(result.getType());
+  }
+  for (Value buffer : intermediate_buffers) {
+    func_operands.push_back(buffer);
+    func_operand_types.push_back(buffer.getType());
+  }
+  FunctionType type =
+      FunctionType::get(builder.getContext(), func_operand_types, {});
+
+  // Create func op and clone instructions.
+  auto fusion_func = builder.create<func::FuncOp>(loc, getFusionName(op), type);
+  BlockAndValueMapping mapper;
+  builder.setInsertionPointToEnd(fusion_func.addEntryBlock());
+  for (const auto& arg : enumerate(fusion_func.getArguments())) {
+    if (arg.index() < operands.size()) {
+      mapper.map(operands[arg.index()], arg.value());
+    } else if (arg.index() < operands.size() + results.size()) {
+      mapper.map(results[arg.index() - operands.size()], arg.value());
+    } else {
+      mapper.map(
+          intermediate_buffers[arg.index() - operands.size() - results.size()],
+          arg.value());
+    }
+  }
+  for (auto& inst : op.getRegion().getOps()) {
+    if (isa<lmhlo::TerminatorOp>(&inst)) {
+      continue;
+    }
+    builder.clone(inst, mapper);
+  }
+
+  builder.create<func::ReturnOp>(loc);
+
+  fusion_func->setAttr(kFuncCompIntenFusionAttr,
+                       builder.getStringAttr("dot_fusion"));
+
+  // Create call op.
+  OpBuilder builder_call(op);
+  auto call = builder_call.create<func::CallOp>(loc, fusion_func.getName(),
+                                                TypeRange({}), func_operands);
+  op.erase();
+}
+#endif
+
+void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
+  ModuleOp module_op = getOperation();
+
+  SmallVector<func::FuncOp> comp_inten_fusions;
+  module_op->walk([&](func::FuncOp func) {
+    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
+      comp_inten_fusions.push_back(func);
+    }
+  });
+
+  for (auto func : comp_inten_fusions) {
+    generateCUDASourceForCompIntenFusionFunc(func);
+    deadArgumentElimination(func);
+  }
 }
 
 }  // namespace
