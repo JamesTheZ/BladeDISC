@@ -4,16 +4,14 @@
 #endif
 
 #include "llvm/Support/Program.h"
-#include "llvm/Support/raw_ostream.h"
+// #include "llvm/Support/raw_ostream.h"
 // #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
-// #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+// #include "mlir/Dialect/Func/IR/FuncOps.h"
 // #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
 // #include "tensorflow/compiler/mlir/disc/disc_util.h"
 #include "tensorflow/compiler/mlir/disc/transforms/PassDetail.h"
-// #include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
 #include "tensorflow/core/platform/random.h"
 #include "tensorflow/core/util/env_var.h"
 
@@ -77,11 +75,13 @@ LogicalResult DiscGPUSourceToLibPass::executeProgram(
   for (auto arg : nvcc_args) {
     arg_str += arg.str() + " ";
   }
+  std::string command = program + " " + arg_str;
 #if 1
-  llvm::errs() << "[ZZ] last arg-str: " << arg_str << "\n";
+  llvm::errs() << "[ZZ] command: " << command << "\n";
 #endif
-  std::system((program + " " + arg_str).c_str());
+  std::system(command.c_str());
   return success();
+  // TODO: use llvm ExecuteAndWait instead.
   // int result = llvm::sys::ExecuteAndWait(
   //     program, AsArrayRef(args), AsArrayRef(env), {}, 0, 0, &error_message);
   // return result ? failure() : success();
@@ -107,7 +107,7 @@ LogicalResult DiscGPUSourceToLibPass::compileCUDASource(
   std::string random_number = std::to_string(tensorflow::random::New64());
   std::string tmp_path = "/tmp/";
   std::string source_path = tmp_path + random_number + ".cu";
-  bin_path = tmp_path + random_number + ".o";
+  bin_path = tmp_path + random_number + ".so";
 
   std::ofstream cufile;
   cufile.open(source_path);
@@ -128,13 +128,19 @@ LogicalResult DiscGPUSourceToLibPass::compileCUDASource(
 
   std::string opt_level = "-O3";
   std::string arch_str = getArchStr();
-  SmallVector<llvm::StringRef> nvcc_args{
-      llvm::StringRef(opt_level),   llvm::StringRef("--std=c++11"),
-      llvm::StringRef(cutlass_inc), llvm::StringRef(util_inc),
-      llvm::StringRef(lib_inc),     llvm::StringRef(cuda_lib),
-      llvm::StringRef(arch_str),    llvm::StringRef("-c"),
-      llvm::StringRef("-o"),        llvm::StringRef(bin_path),
-      llvm::StringRef(source_path)};
+  SmallVector<llvm::StringRef> nvcc_args{llvm::StringRef(opt_level),
+                                         llvm::StringRef("--std=c++11"),
+                                         llvm::StringRef(cutlass_inc),
+                                         llvm::StringRef(util_inc),
+                                         llvm::StringRef(lib_inc),
+                                         llvm::StringRef(cuda_lib),
+                                         llvm::StringRef(arch_str),
+                                         llvm::StringRef("-shared"),
+                                         llvm::StringRef("--compiler-options"),
+                                         llvm::StringRef("'-fPIC'"),
+                                         llvm::StringRef("-o"),
+                                         llvm::StringRef(bin_path),
+                                         llvm::StringRef(source_path)};
 
   SmallVector<llvm::StringRef> nvcc_env{
       llvm::StringRef(
