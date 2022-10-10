@@ -476,7 +476,8 @@ SourceEmitterCUDA::EmitBroadcastOfScalarOrSplatConstantOp(
 
   // Only deal with the case that the last rewriter in the same block is the
   // ConstantOp.
-  auto input_op = findLastWriterInBlock(op->getOperand(0), op->getBlock());
+  auto input_value = op->getOperand(0);
+  auto input_op = findLastWriterInBlock(input_value, op->getBlock());
   if (!input_op.hasValue()) {
     return llvm::None;
   }
@@ -487,10 +488,10 @@ SourceEmitterCUDA::EmitBroadcastOfScalarOrSplatConstantOp(
     return llvm::None;
   }
 
-  auto expression = EmitScalarOrSplatConstantExpression(constant);
-  if (!expression.hasValue()) {
-    return llvm::None;
+  if (binding.count(input_value) == 0) {
+    llvm::None;
   }
+  std::string expression = binding[input_value];
 
   Value result = op->getOperand(2);
   MemRefType memref_type = result.getType().cast<MemRefType>();
@@ -502,7 +503,7 @@ SourceEmitterCUDA::EmitBroadcastOfScalarOrSplatConstantOp(
   assert(binding.count(result) == 0);
   binding[result] = result_name;
 
-  return type_str + " " + result_name + " = " + expression.value();
+  return type_str + " " + result_name + " = " + expression;
 }
 
 llvm::Optional<std::string> SourceEmitterCUDA::EmitOp(

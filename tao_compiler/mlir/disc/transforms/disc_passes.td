@@ -489,3 +489,13 @@ def DiscCompIntenFusionToCUDASourcePass : Pass<"disc-compute-intensive-fusion-to
   ];
 }
 
+def DiscGPUSourceToLibPass : Pass<"disc-gpu-source-to-lib", "ModuleOp"> {
+  let summary = "Pass to convert CUDA code to library, possibly with host side logic.";
+  let constructor = "createDiscGPUSourceToLibPass()";
+  let options = [
+    Option<"cc_major_", "gpu-sm-cc-major", "int",
+            /*default=*/"8", "gpu sm cc_major.">,
+    Option<"cc_minor_", "gpu-sm-cc-minor", "int",
+            /*default=*/"0", "gpu sm cc_minor.">,
+  ];
+}

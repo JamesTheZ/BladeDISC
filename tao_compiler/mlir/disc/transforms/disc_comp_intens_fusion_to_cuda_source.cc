@@ -49,6 +49,20 @@ constexpr const char* kPermuteDLayout = "EpiloguePermuteDLayout";
 constexpr const char* kGemmFusionFuncName = "gemmFusionFunc";
 
 constexpr const char* gemm_fusion_template =
+    "#include <algorithm>\n"
+    "#include <iostream>\n"
+    "\n"
+    "#include \"cutlass/array.h\"\n"
+    "#include \"cutlass/complex.h\"\n"
+    "#include \"cutlass/cutlass.h\"\n"
+    "#include \"cutlass/epilogue/thread/activation.h\"\n"
+    "#include \"cutlass/epilogue/thread/linear_combination_generic.h\"\n"
+    "#include \"cutlass/epilogue/thread/scale_type.h\"\n"
+    "#include \"cutlass/gemm/device/default_gemm_configuration.h\"\n"
+    "#include \"cutlass/gemm/device/gemm_universal.h\"\n"
+    "#include \"cutlass/util/host_tensor.h\"\n"
+    "#include \"cutlass/util/reference/host/tensor_fill.h\"\n"
+    "\n"
     "class SpecializedGemmFusion {\n"
     " public:\n"
     "  template <typename T>\n"
@@ -56,15 +70,6 @@ constexpr const char* gemm_fusion_template =
     "    CUTLASS_HOST_DEVICE\n"
     "    T operator()(T const& input) const {\n"
     "      return input;\n"
-    "    }\n"
-    "  };\n"
-    "\n"
-    "  template <>\n"
-    "  struct ElementwiseUnaryOp<EpilogueElementType> {\n"
-    "    CUTLASS_HOST_DEVICE\n"
-    "    EpilogueElementType operator()(\n"
-    "        EpilogueElementType const& input) const {\n"
-    "SpecializedEpilogue\n"
     "    }\n"
     "  };\n"
     "\n"
@@ -152,6 +157,15 @@ constexpr const char* gemm_fusion_template =
     "  void* D_;\n"
     "  const void* alpha_;\n"
     "  const void* beta_;\n"
+    "};\n"
+    "\n"
+    "template <>\n"
+    "struct SpecializedGemmFusion::ElementwiseUnaryOp<EpilogueElementType> {\n"
+    "  CUTLASS_HOST_DEVICE\n"
+    "  EpilogueElementType operator()(\n"
+    "      EpilogueElementType const& input) const {\n"
+    "SpecializedEpilogue\n"
+    "  }\n"
     "};\n"
     "\n"
     "bool SpecializedGemmFusion::run() {\n"
@@ -307,6 +321,7 @@ constexpr const char* gemm_fusion_template =
     "      return false;\n"
     "    }\n"
     "  }\n"
+    "  return true;\n"
     "}\n"
     "\n"
     "bool gemmFusionFunc(int64_t batch_size, int64_t m, int64_t n,\n"
@@ -465,7 +480,8 @@ bool DiscCompIntenFusionToCUDASourcePass::getAccumulatorTypeString(
 bool DiscCompIntenFusionToCUDASourcePass::getOperatorClassTypeString(
     std::string& operator_class_type) {
   // Currently we only support tensor op.
-  return "cutlass::arch::OpClassTensorOp";
+  operator_class_type = "cutlass::arch::OpClassTensorOp";
+  return true;
 }
 
 bool DiscCompIntenFusionToCUDASourcePass::getSMArchString(
@@ -660,7 +676,7 @@ bool DiscCompIntenFusionToCUDASourcePass::
   gather_b = isGatherB(func) ? "true" : "false";
   scatter_d = isScatterD(func) ? "true" : "false";
 
-  std::string intent = "       ";
+  std::string intent = "    ";
   SourceEmitterCUDA source_emitter;
   SourceEmitterCUDA::ValueNameBinding binding;
   for (auto& op : func.getRegion().getOps()) {
@@ -674,7 +690,7 @@ bool DiscCompIntenFusionToCUDASourcePass::
       if (!instruction.hasValue()) {
         return false;
       } else {
-        specialized_epilogue += intent + instruction.value() + "\n";
+        specialized_epilogue += intent + instruction.value() + ";\n";
       }
     }
   }
@@ -802,71 +818,6 @@ void DiscCompIntenFusionToCUDASourcePass::deadArgumentElimination(
 
   func->erase();
 }
-
-#if 0
-void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
-    lmhlo::FusionOp op) {
-  auto parent_func = op->getParentOfType<func::FuncOp>();
-  OpBuilder builder(parent_func);
-  Location loc = parent_func.getLoc();
-
-  FusionPatternBase fusion_pattern(op);
-  const auto& operands = fusion_pattern.getOperands();
-  const auto& results = fusion_pattern.getResults();
-  const auto& intermediate_buffers = fusion_pattern.getInternalResults();
-
-  // Prepare func type.
-  SmallVector<Value> func_operands;
-  SmallVector<Type> func_operand_types;
-  for (Value operand : operands) {
-    func_operands.push_back(operand);
-    func_operand_types.push_back(operand.getType());
-  }
-  for (Value result : results) {
-    func_operands.push_back(result);
-    func_operand_types.push_back(result.getType());
-  }
-  for (Value buffer : intermediate_buffers) {
-    func_operands.push_back(buffer);
-    func_operand_types.push_back(buffer.getType());
-  }
-  FunctionType type =
-      FunctionType::get(builder.getContext(), func_operand_types, {});
-
-  // Create func op and clone instructions.
-  auto fusion_func = builder.create<func::FuncOp>(loc, getFusionName(op), type);
-  BlockAndValueMapping mapper;
-  builder.setInsertionPointToEnd(fusion_func.addEntryBlock());
-  for (const auto& arg : enumerate(fusion_func.getArguments())) {
-    if (arg.index() < operands.size()) {
-      mapper.map(operands[arg.index()], arg.value());
-    } else if (arg.index() < operands.size() + results.size()) {
-      mapper.map(results[arg.index() - operands.size()], arg.value());
-    } else {
-      mapper.map(
-          intermediate_buffers[arg.index() - operands.size() - results.size()],
-          arg.value());
-    }
-  }
-  for (auto& inst : op.getRegion().getOps()) {
-    if (isa<lmhlo::TerminatorOp>(&inst)) {
-      continue;
-    }
-    builder.clone(inst, mapper);
-  }
-
-  builder.create<func::ReturnOp>(loc);
-
-  fusion_func->setAttr(kFuncCompIntenFusionAttr,
-                       builder.getStringAttr("dot_fusion"));
-
-  // Create call op.
-  OpBuilder builder_call(op);
-  auto call = builder_call.create<func::CallOp>(loc, fusion_func.getName(),
-                                                TypeRange({}), func_operands);
-  op.erase();
-}
-#endif
 
 void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
   ModuleOp module_op = getOperation();

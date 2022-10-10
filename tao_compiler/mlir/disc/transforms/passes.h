@@ -257,6 +257,10 @@ std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntenFusionToFuncPass();
 std::unique_ptr<OperationPass<ModuleOp>>
 createDiscCompIntenFusionToCUDASourcePass(int cc_major = 8, int cc_minor = 0);
 
+// Compile GPU source code to library, possibly with host side logic.
+std::unique_ptr<OperationPass<ModuleOp>> createDiscGPUSourceToLibPass(
+    int cc_major = 8, int cc_minor = 0);
+
 }  // namespace disc_ral
 }  // namespace mlir
 
