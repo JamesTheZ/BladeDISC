@@ -12,7 +12,6 @@
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
 #include "tensorflow/compiler/mlir/disc/disc_util.h"
@@ -369,7 +368,6 @@ struct DiscCompIntenFusionToCUDASourcePass
 
  private:
   bool generateCUDASourceForCompIntenFusionFunc(func::FuncOp func);
-  void deadArgumentElimination(func::FuncOp func);
 
   bool isHeavyEpilogue(func::FuncOp func);
   bool getCUDATypeString(Type type, std::string& type_str);
@@ -743,80 +741,47 @@ bool DiscCompIntenFusionToCUDASourcePass::
   // Create source code op containing the source code string.
   SmallVector<Value> operands;
   getEffectiveOperands(func, operands);
-  builder.setInsertionPointToStart(&func.getBody().front());
-  auto source_func = builder.create<lmhlo_disc::SourceCodeFuncOp>(
-      loc, llvm::None, operands, results, cuda_code, gemm_fusion_func_name);
 
-  const int32_t segments[2] = {static_cast<int32_t>(operands.size()),
-                               static_cast<int32_t>(results.size())};
-  auto segments_attr =
-      mlir::DenseI32ArrayAttr::get(source_func->getContext(), segments);
-  source_func->setAttr(source_func.getOperandSegmentSizeAttr(), segments_attr);
-
-  // Erase the converted ops.
-  SmallVector<Operation*> to_erase;
-  for (auto& op : func.getRegion().getOps()) {
-    if (!isa<func::ReturnOp, lmhlo_disc::SourceCodeFuncOp>(&op)) {
-      to_erase.emplace_back(&op);
-    }
-  }
-  for (auto op : to_erase) {
-    op->erase();
-  }
-
-  return true;
-}
-
-void DiscCompIntenFusionToCUDASourcePass::deadArgumentElimination(
-    func::FuncOp func) {
-  SmallVector<int32_t> effective_arg_pos;
-  SmallVector<Type> func_operand_types;
+  // Replace fun and it's calls with `SourceCodeFuncOp`.
+  SmallVector<int32_t> effective_operand_pos;
+  SmallVector<int32_t> effective_result_pos;
   for (auto argument : llvm::enumerate(func.getArguments())) {
-    if (!getValueUsers(argument.value()).empty()) {
-      effective_arg_pos.push_back(argument.index());
-      func_operand_types.push_back(argument.value().getType());
+    if (llvm::find(operands, argument.value()) != operands.end()) {
+      effective_operand_pos.push_back(argument.index());
+    }
+    if (llvm::find(results, argument.value()) != results.end()) {
+      effective_result_pos.push_back(argument.index());
     }
   }
 
-  // Create new func with effective arguments.
-  OpBuilder builder(func);
-  Location loc = func.getLoc();
-  FunctionType type =
-      FunctionType::get(builder.getContext(), func_operand_types, {});
-  auto new_func = builder.create<func::FuncOp>(loc, func.getName(), type);
-
-  BlockAndValueMapping mapper;
-  builder.setInsertionPointToEnd(new_func.addEntryBlock());
-  for (const auto& arg : enumerate(new_func.getArguments())) {
-    mapper.map(func.getArgument(effective_arg_pos[arg.index()]), arg.value());
-  }
-  for (auto& inst : func.getBody().getOps()) {
-    builder.clone(inst, mapper);
-  }
-  new_func->setAttr(kFuncCompIntenFusionAttr,
-                    func->getAttr(kFuncCompIntenFusionAttr));
-
-  //  create new call.
   auto module_op = func->getParentOfType<ModuleOp>();
   Optional<SymbolTable::UseRange> symbol_uses = func.getSymbolUses(module_op);
   for (SymbolTable::SymbolUse symbol_use : *symbol_uses) {
     Operation* user = symbol_use.getUser();
-    OpBuilder builder_call(user);
     auto call = dyn_cast<func::CallOp>(user);
     if (!call) {
       continue;
     }
     SmallVector<Value> operands;
-    for (auto idx : effective_arg_pos) {
+    for (auto idx : effective_operand_pos) {
       operands.push_back(call.getOperand(idx));
     }
-    auto new_call = builder_call.create<func::CallOp>(loc, new_func.getName(),
-                                                      TypeRange({}), operands);
-    user->replaceAllUsesWith(new_call);
+    SmallVector<Value> results;
+    for (auto idx : effective_result_pos) {
+      results.push_back(call.getOperand(idx));
+    }
+    OpBuilder builder_call(user);
+    auto source_func = builder_call.create<lmhlo_disc::SourceCodeFuncOp>(
+        call->getLoc(), llvm::None, operands, results, cuda_code,
+        gemm_fusion_func_name);
+
+    assert(user->getUsers().empty() &&
+           "Call of gemm fusion should have no users.");
     user->erase();
   }
-
   func->erase();
+
+  return true;
 }
 
 void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
@@ -831,7 +796,6 @@ void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
 
   for (auto func : comp_inten_fusions) {
     generateCUDASourceForCompIntenFusionFunc(func);
-    deadArgumentElimination(func);
   }
 }
 
