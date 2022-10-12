@@ -166,7 +166,7 @@ def LHLODISC_SparseReshapeOp : LHLODISC_Op<"sparse_reshape", []> {
   );
 }
 
-def LHLODISC_SourceCodeFuncOp: LHLODISC_Op<"source_code_func", [AttrSizedOperandSegments]> {
+def LHLODISC_SourceCodeOp: LHLODISC_Op<"source_code", [AttrSizedOperandSegments]> {
   let summary = "Source code func operator";
   let description = [{
     It maintains the source code and the corresponding operands/results of the

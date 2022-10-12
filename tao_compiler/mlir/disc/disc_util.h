@@ -31,6 +31,7 @@ constexpr llvm::StringRef kDhloInputShapeAttr = "disc.input_shape";
 constexpr llvm::StringRef kDhloInputValueAttr = "disc.input_value";
 constexpr llvm::StringRef kFuncEliminatedDeadArgumentsAttr = "disc.elimargs";
 constexpr llvm::StringRef kFuncCompIntenFusionAttr = "disc.comp_inten_fusion";
+constexpr llvm::StringRef kDynLibPathAttr = "disc.dyn_lib_path";
 
 inline mlir::DenseIntElementsAttr GetI64ElementsAttr(ArrayRef<int64_t> values,
                                                      Builder* builder) {

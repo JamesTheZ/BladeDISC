@@ -48,6 +48,7 @@ constexpr const char* kPermuteDLayout = "EpiloguePermuteDLayout";
 constexpr const char* kGemmFusionFuncName = "gemmFusionFunc";
 
 constexpr const char* gemm_fusion_template =
+    "\n"
     "#include <algorithm>\n"
     "#include <iostream>\n"
     "\n"
@@ -742,7 +743,7 @@ bool DiscCompIntenFusionToCUDASourcePass::
   SmallVector<Value> operands;
   getEffectiveOperands(func, operands);
 
-  // Replace fun and it's calls with `SourceCodeFuncOp`.
+  // Replace fun and it's calls with `SourceCodeOp`.
   SmallVector<int32_t> effective_operand_pos;
   SmallVector<int32_t> effective_result_pos;
   for (auto argument : llvm::enumerate(func.getArguments())) {
@@ -771,7 +772,7 @@ bool DiscCompIntenFusionToCUDASourcePass::
       results.push_back(call.getOperand(idx));
     }
     OpBuilder builder_call(user);
-    auto source_func = builder_call.create<lmhlo_disc::SourceCodeFuncOp>(
+    auto source_code_op = builder_call.create<lmhlo_disc::SourceCodeOp>(
         call->getLoc(), llvm::None, operands, results, cuda_code,
         gemm_fusion_func_name);
 

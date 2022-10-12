@@ -1840,6 +1840,7 @@ cc_library(
     name = "disc_gpu_source_to_lib",
     srcs = ["transforms/disc_gpu_source_to_lib.cc"],
     deps = [
+        ":disc_util",
         ":lmhlo_disc",
         ":pass_details",
         "@llvm-project//mlir:Pass",

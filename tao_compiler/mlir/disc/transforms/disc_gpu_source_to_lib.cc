@@ -10,7 +10,7 @@
 // #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/Pass/Pass.h"
 #include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
-// #include "tensorflow/compiler/mlir/disc/disc_util.h"
+#include "tensorflow/compiler/mlir/disc/disc_util.h"
 #include "tensorflow/compiler/mlir/disc/transforms/PassDetail.h"
 #include "tensorflow/core/platform/random.h"
 #include "tensorflow/core/util/env_var.h"
@@ -40,17 +40,30 @@ class DiscGPUSourceToLibPass
 
     // Find ops containing CUDA code and concatenate CUDA code.
     std::string cuda_code;
-    m.walk([&](lmhlo_disc::SourceCodeFuncOp source_func) {
-      if (auto attr = source_func.codeAttr()) {
-        cuda_code += attr.getValue();
-      }
+    SmallVector<lmhlo_disc::SourceCodeOp> source_code_ops;
+    m.walk([&](lmhlo_disc::SourceCodeOp source_code_op) {
+      source_code_ops.push_back(source_code_op);
     });
+
+    for (auto source_code_op : source_code_ops) {
+      if (auto attr = source_code_op.codeAttr()) {
+        cuda_code += attr.getValue();
+      } else {
+        signalPassFailure();
+        return;
+      }
+    }
 
     llvm::errs() << "[ZZ] cuda code to compile:\n" << cuda_code << "\n";
 
     // Compile CUDA code.
     std::string bin_path;
     compileCUDASource(cuda_code, bin_path);
+
+    for (auto source_code_op : source_code_ops) {
+      OpBuilder builder(source_code_op);
+      source_code_op->setAttr(kDynLibPathAttr, builder.getStringAttr(bin_path));
+    }
   }
 
  private:
@@ -79,8 +92,12 @@ LogicalResult DiscGPUSourceToLibPass::executeProgram(
 #if 1
   llvm::errs() << "[ZZ] command: " << command << "\n";
 #endif
-  std::system(command.c_str());
-  return success();
+  int result = std::system(command.c_str());
+  if (result != 0) {
+    return failure();
+  } else {
+    return success();
+  }
   // TODO: use llvm ExecuteAndWait instead.
   // int result = llvm::sys::ExecuteAndWait(
   //     program, AsArrayRef(args), AsArrayRef(env), {}, 0, 0, &error_message);
