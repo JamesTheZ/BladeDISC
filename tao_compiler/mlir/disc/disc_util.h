@@ -30,7 +30,7 @@ namespace disc_ral {
 constexpr llvm::StringRef kDhloInputShapeAttr = "disc.input_shape";
 constexpr llvm::StringRef kDhloInputValueAttr = "disc.input_value";
 constexpr llvm::StringRef kFuncEliminatedDeadArgumentsAttr = "disc.elimargs";
-constexpr llvm::StringRef kFuncCompIntenFusionAttr = "disc.comp_inten_fusion";
+constexpr llvm::StringRef kFuncCompIntensFusionAttr = "disc.comp_intens_fusion";
 constexpr llvm::StringRef kDynLibPathAttr = "disc.dyn_lib_path";
 
 inline mlir::DenseIntElementsAttr GetI64ElementsAttr(ArrayRef<int64_t> values,
@@ -106,7 +106,7 @@ bool isMemIntensiveOptExperimentalEnabled();
 bool isStitchEnabled();
 
 // Returns true if `DISC_ENABLE_DOT_FUSE` is true.
-bool isCompIntenFusionEnabled();
+bool isCompIntensFusionEnabled();
 
 // Returns data users of the value and its aliases (e.g. memref.cast).
 // Here non-data users means DimOp, DeallocOp and ShapeOfOp.

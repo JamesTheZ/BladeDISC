@@ -55,7 +55,7 @@ constexpr const char* kRalGpuLaunch = "ral_kernel_launch";
 constexpr const char* kRalCpuLaunch = "ral_kernel_launch";
 constexpr const char* kMalloc = "alloc";
 constexpr const char* kFree = "dealloc";
-constexpr const char* kRalCompIntFusion = "ral_comp_int_fusion";
+constexpr const char* kRalCompIntFusion = "ral_comp_intens_fusion";
 
 // Encodes a mlir type and appends the encoding to the string buffer `out`.
 LogicalResult getTypeEncoding(MLIRContext* ctx, Type t, StrT& out) {
@@ -1109,14 +1109,11 @@ LogicalResult ConvertSourceCodeOpToDispatchOpPattern::matchAndRewrite(
     return failure();
   }
 
+  // TODO(disc): we use the default stream a.t.m. Implement a stream assignment
+  // algo in case necessary.
   Location loc = source_code_op.getLoc();
   auto ctx = rewriter.getContext();
   Type llvm_int32_type = IntegerType::get(ctx, 32);
-  Value num_arg_value = rewriter.create<LLVM::ConstantOp>(
-      loc, llvm_int32_type, rewriter.getI32IntegerAttr(num_arguments));
-
-  // TODO(disc): we use the default stream a.t.m. Implement a stream assignment
-  // algo in case necessary.
   Type pointer_type = LLVM::LLVMPointerType::get(IntegerType::get(ctx, 8));
   Value zero = rewriter.create<LLVM::ConstantOp>(loc, llvm_int32_type,
                                                  rewriter.getI32IntegerAttr(0));
@@ -1126,7 +1123,6 @@ LogicalResult ConvertSourceCodeOpToDispatchOpPattern::matchAndRewrite(
       kernel_name_global,  /* name of the kernel to launch */
       dyn_lib_path_global, /* path of the dynamic library containing the func*/
       stream_idx,          /* gpu stream index */
-      num_arg_value,       /* num_args */
       kernel_params        /* params for the kernel to launch */
   };
 

@@ -250,12 +250,12 @@ std::unique_ptr<OperationPass<func::FuncOp>>
 createDiscLowerQuantizeAndDequantizePass();
 
 // Convert compute-intensive fusion to the call of FuncOp.
-std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntenFusionToFuncPass();
+std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntensFusionToFuncPass();
 
 // Convert the functions representing compute-intensive fusion into CUDA source
 // code.
 std::unique_ptr<OperationPass<ModuleOp>>
-createDiscCompIntenFusionToCUDASourcePass(int cc_major = 8, int cc_minor = 0);
+createDiscCompIntensFusionToCUDASourcePass(int cc_major = 8, int cc_minor = 0);
 
 // Compile GPU source code to library, possibly with host side logic.
 std::unique_ptr<OperationPass<ModuleOp>> createDiscGPUSourceToLibPass(

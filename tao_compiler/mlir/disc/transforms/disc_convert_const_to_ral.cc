@@ -100,7 +100,7 @@ class DiscConstToRALPass : public DiscConstToRALPassBase<DiscConstToRALPass> {
         return;
       }
       if (auto func = op->getParentOfType<func::FuncOp>()) {
-        if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
+        if (func->getAttrOfType<StringAttr>(kFuncCompIntensFusionAttr)) {
           return;
         }
       }

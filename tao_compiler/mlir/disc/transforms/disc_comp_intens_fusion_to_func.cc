@@ -21,16 +21,17 @@ namespace mlir {
 namespace disc_ral {
 namespace {
 
-struct DiscCompIntenFusionToFuncPass
-    : public DiscCompIntenFusionToFuncPassBase<DiscCompIntenFusionToFuncPass> {
+struct DiscCompIntensFusionToFuncPass
+    : public DiscCompIntensFusionToFuncPassBase<
+          DiscCompIntensFusionToFuncPass> {
  public:
   void runOnOperation() override;
 
  private:
-  void convertKCompIntenFusionToFunc(lmhlo::FusionOp op);
+  void convertKCompIntensFusionToFunc(lmhlo::FusionOp op);
 };
 
-void DiscCompIntenFusionToFuncPass::runOnOperation() {
+void DiscCompIntensFusionToFuncPass::runOnOperation() {
   ModuleOp module_op = getOperation();
 
   SmallVector<lmhlo::FusionOp> kdot_fusions;
@@ -41,11 +42,11 @@ void DiscCompIntenFusionToFuncPass::runOnOperation() {
   });
 
   for (auto op : kdot_fusions) {
-    convertKCompIntenFusionToFunc(op);
+    convertKCompIntensFusionToFunc(op);
   }
 }
 
-void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
+void DiscCompIntensFusionToFuncPass::convertKCompIntensFusionToFunc(
     lmhlo::FusionOp op) {
   auto parent_func = op->getParentOfType<func::FuncOp>();
   OpBuilder builder(parent_func);
@@ -98,7 +99,7 @@ void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
 
   builder.create<func::ReturnOp>(loc);
 
-  fusion_func->setAttr(kFuncCompIntenFusionAttr,
+  fusion_func->setAttr(kFuncCompIntensFusionAttr,
                        builder.getStringAttr("dot_fusion"));
 
   // Create call op.
@@ -110,8 +111,9 @@ void DiscCompIntenFusionToFuncPass::convertKCompIntenFusionToFunc(
 
 }  // namespace
 
-std::unique_ptr<OperationPass<ModuleOp>> createDiscCompIntenFusionToFuncPass() {
-  return std::make_unique<DiscCompIntenFusionToFuncPass>();
+std::unique_ptr<OperationPass<ModuleOp>>
+createDiscCompIntensFusionToFuncPass() {
+  return std::make_unique<DiscCompIntensFusionToFuncPass>();
 }
 
 }  // namespace disc_ral

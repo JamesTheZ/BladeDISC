@@ -600,7 +600,7 @@ struct DiscLowerToLibraryCallPass
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     // skip kdot fusion func.
-    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
+    if (func->getAttrOfType<StringAttr>(kFuncCompIntensFusionAttr)) {
       return;
     }
     MLIRContext* context = &getContext();

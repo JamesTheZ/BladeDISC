@@ -352,12 +352,12 @@ int64_t stringReplaceInplace(std::string& subject, const std::string& oldsub,
   return count;
 }
 
-struct DiscCompIntenFusionToCUDASourcePass
-    : public DiscCompIntenFusionToCUDASourcePassBase<
-          DiscCompIntenFusionToCUDASourcePass> {
+struct DiscCompIntensFusionToCUDASourcePass
+    : public DiscCompIntensFusionToCUDASourcePassBase<
+          DiscCompIntensFusionToCUDASourcePass> {
  public:
-  DiscCompIntenFusionToCUDASourcePass() = delete;
-  explicit DiscCompIntenFusionToCUDASourcePass(int cc_major, int cc_minor) {
+  DiscCompIntensFusionToCUDASourcePass() = delete;
+  explicit DiscCompIntensFusionToCUDASourcePass(int cc_major, int cc_minor) {
     cc_major_ = cc_major;
     cc_minor_ = cc_minor;
   }
@@ -368,7 +368,7 @@ struct DiscCompIntenFusionToCUDASourcePass
   int cc_minor_;
 
  private:
-  bool generateCUDASourceForCompIntenFusionFunc(func::FuncOp func);
+  bool generateCUDASourceForCompIntensFusionFunc(func::FuncOp func);
 
   bool isHeavyEpilogue(func::FuncOp func);
   bool getCUDATypeString(Type type, std::string& type_str);
@@ -391,12 +391,12 @@ struct DiscCompIntenFusionToCUDASourcePass
   void getEffectiveOperands(func::FuncOp func, SmallVector<Value>& operands);
 };
 
-bool DiscCompIntenFusionToCUDASourcePass::isHeavyEpilogue(func::FuncOp func) {
+bool DiscCompIntensFusionToCUDASourcePass::isHeavyEpilogue(func::FuncOp func) {
   // TODO: check whether it is heavy or not according to the logic in CUTLASS.
   return false;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getCUDATypeString(
+bool DiscCompIntensFusionToCUDASourcePass::getCUDATypeString(
     Type type, std::string& type_str) {
   if (type.isInteger(1)) {
     type_str = "cutlass::uint1b_t";
@@ -422,7 +422,7 @@ bool DiscCompIntenFusionToCUDASourcePass::getCUDATypeString(
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getLayoutStrings(
+bool DiscCompIntensFusionToCUDASourcePass::getLayoutStrings(
     const mhlo::DotDimensionNumbersAttr& dimension_numbers,
     SmallVector<std::string>& layout) {
   auto lhs_contracting_dims = dimension_numbers.getLhsContractingDimensions();
@@ -460,7 +460,7 @@ bool DiscCompIntenFusionToCUDASourcePass::getLayoutStrings(
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getAccumulatorTypeString(
+bool DiscCompIntensFusionToCUDASourcePass::getAccumulatorTypeString(
     Type type, std::string& accumulator_type_str) {
   if (type.isSignedInteger() && type.getIntOrFloatBitWidth() <= 32) {
     accumulator_type_str = "cutlass::int32b_t";
@@ -476,14 +476,14 @@ bool DiscCompIntenFusionToCUDASourcePass::getAccumulatorTypeString(
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getOperatorClassTypeString(
+bool DiscCompIntensFusionToCUDASourcePass::getOperatorClassTypeString(
     std::string& operator_class_type) {
   // Currently we only support tensor op.
   operator_class_type = "cutlass::arch::OpClassTensorOp";
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getSMArchString(
+bool DiscCompIntensFusionToCUDASourcePass::getSMArchString(
     std::string& sm_arch) {
   if (cc_major_ == 8) {
     sm_arch = "cutlass::arch::Sm80";
@@ -499,43 +499,43 @@ bool DiscCompIntenFusionToCUDASourcePass::getSMArchString(
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getScaleKindString(
+bool DiscCompIntensFusionToCUDASourcePass::getScaleKindString(
     std::string& scale_kind) {
   // TODO: update according to the problem.
   scale_kind = "cutlass::epilogue::thread::ScaleType::NoBetaScaling";
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getCountVectorizedString(
+bool DiscCompIntensFusionToCUDASourcePass::getCountVectorizedString(
     const std::string& element_output_type, std::string& count_vectorized) {
   count_vectorized =
       "128 / cutlass::sizeof_bits<" + element_output_type + ">::value";
   return true;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::isGatherA(func::FuncOp func) {
+bool DiscCompIntensFusionToCUDASourcePass::isGatherA(func::FuncOp func) {
   // TODO: update according to the problem.
   return false;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::isGatherB(func::FuncOp func) {
+bool DiscCompIntensFusionToCUDASourcePass::isGatherB(func::FuncOp func) {
   // TODO: update according to the problem.
   return false;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::isScatterD(func::FuncOp func) {
+bool DiscCompIntensFusionToCUDASourcePass::isScatterD(func::FuncOp func) {
   // TODO: update according to the problem.
   return false;
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::getPermuteDLayoutString(
+bool DiscCompIntensFusionToCUDASourcePass::getPermuteDLayoutString(
     func::FuncOp func, std::string& permute_d_layout) {
   // TODO: update according to the problem.
   permute_d_layout = "cutlass::layout::NoPermute";
   return true;
 }
 
-void DiscCompIntenFusionToCUDASourcePass::getResults(
+void DiscCompIntensFusionToCUDASourcePass::getResults(
     func::FuncOp func, SmallVector<Value>& results) {
   DenseSet<Operation*> op_set;
   auto ops = func.getRegion().getOps();
@@ -561,7 +561,7 @@ void DiscCompIntenFusionToCUDASourcePass::getResults(
   });
 }
 
-void DiscCompIntenFusionToCUDASourcePass::getEffectiveOperands(
+void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperands(
     func::FuncOp func, SmallVector<Value>& operands) {
   DenseSet<Operation*> op_set;
   auto ops = func.getRegion().getOps();
@@ -602,8 +602,8 @@ void DiscCompIntenFusionToCUDASourcePass::getEffectiveOperands(
   });
 }
 
-bool DiscCompIntenFusionToCUDASourcePass::
-    generateCUDASourceForCompIntenFusionFunc(func::FuncOp func) {
+bool DiscCompIntensFusionToCUDASourcePass::
+    generateCUDASourceForCompIntensFusionFunc(func::FuncOp func) {
   std::string cuda_code = gemm_fusion_template;
 
   // Values to obtain according to func.
@@ -785,27 +785,27 @@ bool DiscCompIntenFusionToCUDASourcePass::
   return true;
 }
 
-void DiscCompIntenFusionToCUDASourcePass::runOnOperation() {
+void DiscCompIntensFusionToCUDASourcePass::runOnOperation() {
   ModuleOp module_op = getOperation();
 
-  SmallVector<func::FuncOp> comp_inten_fusions;
+  SmallVector<func::FuncOp> comp_intens_fusions;
   module_op->walk([&](func::FuncOp func) {
-    if (func->getAttrOfType<StringAttr>(kFuncCompIntenFusionAttr)) {
-      comp_inten_fusions.push_back(func);
+    if (func->getAttrOfType<StringAttr>(kFuncCompIntensFusionAttr)) {
+      comp_intens_fusions.push_back(func);
     }
   });
 
-  for (auto func : comp_inten_fusions) {
-    generateCUDASourceForCompIntenFusionFunc(func);
+  for (auto func : comp_intens_fusions) {
+    generateCUDASourceForCompIntensFusionFunc(func);
   }
 }
 
 }  // namespace
 
 std::unique_ptr<OperationPass<ModuleOp>>
-createDiscCompIntenFusionToCUDASourcePass(int cc_major, int cc_minor) {
-  return std::make_unique<DiscCompIntenFusionToCUDASourcePass>(cc_major,
-                                                               cc_minor);
+createDiscCompIntensFusionToCUDASourcePass(int cc_major, int cc_minor) {
+  return std::make_unique<DiscCompIntensFusionToCUDASourcePass>(cc_major,
+                                                                cc_minor);
 }
 
 }  // namespace disc_ral
