@@ -26,6 +26,7 @@ constexpr const char* kSpecializedClassName = "SpecializedGemmFusion";
 constexpr const char* kSpecializedEpilogue = "SpecializedEpilogue";
 constexpr const char* kEpilogueIsHeavy = "EpilogueIsHeavy";
 
+constexpr const char* kGRank = "GRank";
 constexpr const char* kElementAType = "ElementAType";
 constexpr const char* kElementALayout = "ElementALayout";
 constexpr const char* kElementBType = "ElementBType";
@@ -47,6 +48,7 @@ constexpr const char* kPermuteDLayout = "EpiloguePermuteDLayout";
 
 constexpr const char* kGemmFusionFuncName = "gemmFusionFunc";
 
+// clang-format off
 constexpr const char* gemm_fusion_template =
     "\n"
     "#include <algorithm>\n"
@@ -126,37 +128,28 @@ constexpr const char* gemm_fusion_template =
     "  };\n"
     "\n"
     " public:\n"
-    "  SpecializedGemmFusion(int64_t batch_size, int64_t m, int64_t n,\n"
-    "                        int64_t k, const void* A, bool a_transpose,\n"
-    "                        const void* B, bool b_transpose, const void* C,\n"
-    "                        void* D, const void* alpha, const void* beta)\n"
-    "      : batch_size_(batch_size),\n"
+    "  SpecializedGemmFusion(void* stream, int64_t batch_size, int64_t m,\n"
+    "                        int64_t n, int64_t k, const void* A,\n"
+    "                        const void* B, void* D)\n"
+    "      : stream_(stream),\n"
+    "        batch_size_(batch_size),\n"
     "        m_(m),\n"
     "        n_(n),\n"
     "        k_(k),\n"
     "        A_(A),\n"
-    "        a_transpose_(a_transpose),\n"
     "        B_(B),\n"
-    "        b_transpose_(b_transpose),\n"
-    "        C_(C),\n"
-    "        D_(D),\n"
-    "        alpha_(alpha),\n"
-    "        beta_(beta) {}\n"
+    "        D_(D) {}\n"
     "  bool run();\n"
     "\n"
     " private:\n"
+    "  void* stream_;\n"
     "  int64_t batch_size_;\n"
     "  int64_t m_;\n"
     "  int64_t n_;\n"
     "  int64_t k_;\n"
     "  const void* A_;\n"
-    "  bool a_transpose_;\n"
     "  const void* B_;\n"
-    "  bool b_transpose_;\n"
-    "  const void* C_;\n"
     "  void* D_;\n"
-    "  const void* alpha_;\n"
-    "  const void* beta_;\n"
     "};\n"
     "\n"
     "template <>\n"
@@ -236,9 +229,9 @@ constexpr const char* gemm_fusion_template =
     "\n"
     "  cutlass::gemm::GemmCoord problem_size(m_, n_, k_);\n"
     "\n"
+    "  // TODO: support alpha and beta.\n"
     "  typename EpilogueOutputOp::Params epilogue(\n"
-    "      *reinterpret_cast<const ElementComputeEpilogue*>(alpha_),\n"
-    "      *reinterpret_cast<const ElementComputeEpilogue*>(beta_));\n"
+    "      ElementComputeEpilogue(1), ElementComputeEpilogue(0));\n"
     "\n"
     "  // Currently, it requires the batch dimension to be the most\n"
     "  // significant dim.\n"
@@ -246,13 +239,13 @@ constexpr const char* gemm_fusion_template =
     "      static_cast<long long int>(m_) * static_cast<long long int>(k_);\n"
     "  long long int batch_stride_B =\n"
     "      static_cast<long long int>(k_) * static_cast<long long int>(n_);\n"
-    "  // Currently, we assume C_ is always nullptr.\n"
+    "  // Currently, we only support C as nullptr.\n"
     "  long long int batch_stride_C = 0;\n"
     "  long long int batch_stride_D =\n"
     "      static_cast<long long int>(m_) * static_cast<long long int>(n_);\n"
     "\n"
-    "  int const lda = a_transpose_ ? m_ : k_;\n"
-    "  int const ldb = b_transpose_ ? k_ : n_;\n"
+    "  int const lda = (LayoutA == cutlass::layout::ColumnMajor) ? m_ : k_;\n"
+    "  int const ldb = (LayoutB == cutlass::layout::ColumnMajor) ? k_ : n_;\n"
     "  int const ldc = 0;\n"
     "  // Currently, it requires the output to be row-major.\n"
     "  int const ldd = n_;\n"
@@ -287,7 +280,7 @@ constexpr const char* gemm_fusion_template =
     "                                       epilogue,\n"
     "                                       A_,\n"
     "                                       B_,\n"
-    "                                       C_,\n"
+    "                                       nullptr,\n"
     "                                       D_,\n"
     "                                       batch_stride_A,\n"
     "                                       batch_stride_B,\n"
@@ -311,7 +304,7 @@ constexpr const char* gemm_fusion_template =
     "      return false;\n"
     "    }\n"
     "\n"
-    "    status = gemm_op.initialize(arguments, workspace.get());\n"
+    "    status = gemm_op.initialize(arguments, workspace.get(), stream_);\n"
     "    if (status != cutlass::Status::kSuccess) {\n"
     "      return false;\n"
     "    }\n"
@@ -324,15 +317,41 @@ constexpr const char* gemm_fusion_template =
     "  return true;\n"
     "}\n"
     "\n"
-    "bool gemmFusionFunc(int64_t batch_size, int64_t m, int64_t n,\n"
-    "                    int64_t k, const void* A, bool a_transpose,\n"
-    "                    const void* B, bool b_transpose, const void* C,\n"
-    "                    void* D, const void* alpha, const void* beta) {\n"
-    "  SpecializedGemmFusion specialization(batch_size, m, n, k, A,\n"
-    "                                       a_transpose, B, b_transpose, C,\n"
-    "                                       D, alpha, beta);\n"
+    "bool gemmFusionFunc(void* stream, void** params) {\n"
+    "  // MemRef struct in LLVM.\n"
+    "  // template <typename T, int N>\n"
+    "  // struct MemRefType {\n"
+    "  //   T* basePtr;\n"
+    "  //   T* data;\n"
+    "  //   int64_t offset;\n"
+    "  //   int64_t sizes[N];\n"
+    "  //   int64_t strides[N];\n"
+    "  // };\n"
+    "\n"
+    "  int64_t size_struct = 3 + GRank * 2;\n"
+    "  int64_t* a_sizes = reinterpret_cast<int64_t*>(params[3]);\n"
+    "  int64_t* b_sizes = reinterpret_cast<int64_t*>(params[3 + size_struct]);\n"
+    "  int64_t batch_size = 1;\n"
+    "  for (int64_t i = 0; i < GRank - 2; ++i) {\n"
+    "    batch_size *= a_sizes[i];\n"
+    "  }\n"
+    "\n"
+    "  int64_t m = (ElementALayout == cutlass::layout::ColumnMajor) ?\n"
+    "      a_sizes[GRank - 1] : a_sizes[GRank - 2];\n"
+    "  int64_t k = (ElementALayout == cutlass::layout::ColumnMajor) ?\n"
+    "      a_sizes[GRank - 2] : a_sizes[GRank - 1];\n"
+    "  int64_t n = (ElementBLayout == cutlass::layout::ColumnMajor) ?\n"
+    "      b_sizes[GRank - 2] : b_sizes[GRank - 1];\n"
+    "\n"
+    "  ElementAType* a = reinterpret_cast<ElementAType*>(params[1]);\n"
+    "  ElementBType* b = reinterpret_cast<ElementBType*>(params[1 + size_struct]);\n"
+    "  ElementOutputType* d =\n"
+    "      reinterpret_cast<ElementOutputType*>(params[1 + 2 * size_struct]);\n"
+    "\n"
+    "  SpecializedGemmFusion specialization(stream, batch_size, m, n, k, a, b, d);\n"
     "  return specialization.run();\n"
     "}";
+// clang-format on
 
 int64_t stringReplaceInplace(std::string& subject, const std::string& oldsub,
                              const std::string& newsub, bool replace_all) {
@@ -610,6 +629,7 @@ bool DiscCompIntensFusionToCUDASourcePass::
   std::string specialized_class_name;
   std::string specialized_epilogue;
   std::string epilogue_is_heavy;
+  std::string gemm_rank;
   std::string element_a_type;
   std::string element_a_layout;
   std::string element_b_type;
@@ -646,6 +666,8 @@ bool DiscCompIntensFusionToCUDASourcePass::
   auto a_type = A.getType().dyn_cast<MemRefType>();
   auto b_type = B.getType().dyn_cast<MemRefType>();
   auto d_type = D.getType().dyn_cast<MemRefType>();
+
+  gemm_rank = std::to_string(a_type.getRank());
 
   if (!getCUDATypeString(a_type.getElementType(), element_a_type) ||
       !getCUDATypeString(b_type.getElementType(), element_b_type) ||
@@ -709,6 +731,7 @@ bool DiscCompIntensFusionToCUDASourcePass::
   stringReplaceInplace(cuda_code, kSpecializedEpilogue, specialized_epilogue,
                        true);
   stringReplaceInplace(cuda_code, kEpilogueIsHeavy, epilogue_is_heavy, true);
+  stringReplaceInplace(cuda_code, kGRank, gemm_rank, true);
   stringReplaceInplace(cuda_code, kElementAType, element_a_type, true);
   stringReplaceInplace(cuda_code, kElementALayout, element_a_layout, true);
   stringReplaceInplace(cuda_code, kElementBType, element_b_type, true);

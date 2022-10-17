@@ -418,13 +418,18 @@ void ral_comp_intens_fusion(
     return;
   }
 
-  using func_t = bool (*)(void**);
+  using func_t = bool (*)(void*, void**);
   auto fusion_func = (func_t)fusion_func_ptr;
   // auto fusion_func =
   // reinterpret_cast<std::function<bool(void**)>>(fusion_func_ptr);
 
+  auto gpu_driver = ctx->getDriver<GPUDriver>(GPUDriver::name());
+  auto stream =
+      static_cast<se::Stream*>(gpu_driver->asSEStream(ctx, stream_handle));
+  void* s = stream->implementation()->GpuStreamHack();
+
   // TODO: deal with stream and context.
-  bool result = fusion_func(params);
+  bool result = fusion_func(s, params);
 
   if (!result) {
     std::string msg =

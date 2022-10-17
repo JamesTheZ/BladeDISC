@@ -55,7 +55,7 @@ constexpr const char* kRalGpuLaunch = "ral_kernel_launch";
 constexpr const char* kRalCpuLaunch = "ral_kernel_launch";
 constexpr const char* kMalloc = "alloc";
 constexpr const char* kFree = "dealloc";
-constexpr const char* kRalCompIntFusion = "ral_comp_intens_fusion";
+constexpr const char* kRalCompIntensFusion = "ral_comp_intens_fusion";
 
 // Encodes a mlir type and appends the encoding to the string buffer `out`.
 LogicalResult getTypeEncoding(MLIRContext* ctx, Type t, StrT& out) {
@@ -1131,8 +1131,8 @@ LogicalResult ConvertSourceCodeOpToDispatchOpPattern::matchAndRewrite(
       source_code_op->getParentOfType<LLVM::LLVMFuncOp>().getArgument(0);
 
   rewriter.replaceOpWithNewOp<disc_ral::DispatchOp>(
-      source_code_op, llvm::None, context_arg, newOperands, kRalCompIntFusion,
-      false, "gpu");
+      source_code_op, llvm::None, context_arg, newOperands,
+      kRalCompIntensFusion, false, "gpu");
 
   return success();
 }
