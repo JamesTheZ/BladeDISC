@@ -28,6 +28,10 @@
 #include "bladnn/bladnn.h"
 #endif
 
+#if 1
+#include <cuda_runtime.h>
+#endif
+
 #ifdef TAO_RAL_USE_STREAM_EXECUTOR
 
 namespace tao {
@@ -427,8 +431,57 @@ void ral_comp_intens_fusion(
   auto stream =
       static_cast<se::Stream*>(gpu_driver->asSEStream(ctx, stream_handle));
   void* s = stream->implementation()->GpuStreamHack();
+#if 0
+  int64_t GRank = 4;
+  int64_t size_struct = 3 + GRank * 2;
+  int64_t batch_size = 1;
+  for (int64_t i = 0; i < GRank - 2; ++i) {
+    int64_t* a_size = reinterpret_cast<int64_t*>(params[3 + i]);
+    batch_size *= *a_size;
+  }
+  std::cout << "[ZZ] ral A sizes.\n";
+  for (int i = 0; i < GRank; i++) {
+    int64_t* a_size = reinterpret_cast<int64_t*>(params[3 + i]);
+    std::cout << i << ":" << *a_size << "\n";
+  }
+  std::cout << "[ZZ] ral B sizes.\n";
+  for (int i = 0; i < GRank; i++) {
+    int64_t* b_size = reinterpret_cast<int64_t*>(params[3 + size_struct + i]);
+    std::cout << i << ":" << *b_size << "\n";
+  }
+  std::cout << std::flush;
 
-  // TODO: deal with stream and context.
+  float* A_ = *reinterpret_cast<float**>(params[1]);
+  float* B_ = *reinterpret_cast<float**>(params[1 + size_struct]);
+  // Row major.
+  int64_t m_ = *reinterpret_cast<int64_t*>(params[3 + GRank - 2]);
+  int64_t k_ = *reinterpret_cast<int64_t*>(params[3 + GRank - 1]);
+  int64_t n_ = *reinterpret_cast<int64_t*>(params[3 + size_struct + GRank - 1]);
+
+  float* A_host = (float*)malloc(sizeof(float) * batch_size * m_ * k_);
+  float* B_host = (float*)malloc(sizeof(float) * batch_size * k_ * n_);
+  cudaMemcpy(A_host, A_, sizeof(float) * batch_size * m_ * k_, cudaMemcpyDefault);
+  cudaMemcpy(B_host, B_, sizeof(float) * batch_size * k_ * n_, cudaMemcpyDefault);
+
+  for (int b = 0; b < batch_size; b++) {
+    for (int m = 0; m < m_; m++) {
+      for (int k = 0; k < k_; k++) {
+        std::cout << "A ral val at " << b << "," << m << "," << k << ": "
+                  << A_host[b * m_ * k_ + m * k_ + k] << std::endl;
+      }
+    }
+  }
+  for (int b = 0; b < batch_size; b++) {
+    for (int k = 0; k < k_; k++) {
+      for (int n = 0; n < n_; n++) {
+        std::cout << "B ral val at " << b << "," << k << "," << n <<": "
+                  << B_host[b * k_ * n_ + k * n_ + n] << std::endl;
+      }
+    }
+  }
+#endif
+
+  // TODO: deal with context.
   bool result = fusion_func(s, params);
 
   if (!result) {

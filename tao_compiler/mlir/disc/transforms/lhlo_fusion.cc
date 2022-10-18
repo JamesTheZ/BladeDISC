@@ -625,7 +625,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
       } while (nameSet.count(name));
       setFusionName(b, op, name);
     });
-#if 1
+#if 0
     func.walk([&](FusionOp op) {
       FusionPatternBase pattern(op);
       auto operands = pattern.getOperands();
