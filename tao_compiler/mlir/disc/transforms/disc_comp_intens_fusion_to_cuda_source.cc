@@ -162,7 +162,6 @@ constexpr const char* gemm_fusion_template =
     "};\n"
     "\n"
     "bool SpecializedGemmFusion::run() {\n"
-    // "  std::cout << \"[CODEGEN] reach \" << __FILE__ << \":\" << __LINE__ << std::endl;\n"
     "  // >>>>>>>>>>>>>>>>>>>> Deterministic config <<<<<<<<<<<<<<<<<<<< //\n"
     "  // The following configuration are determistic currently.\n"
     "  constexpr cutlass::FloatRoundStyle Round =\n"
@@ -260,12 +259,12 @@ constexpr const char* gemm_fusion_template =
     "  // >>>>>>>>>>>>>>>>> Generate tunable parameter <<<<<<<<<<<<<<<<< //\n"
     "  // TODO: implement the parameter selection logic.\n"
     "  if (true) {\n"
-    "    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;\n"
-    "    using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;\n"
-    "    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 16>;\n"
+    "    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 16>;\n"
+    "    using WarpShape = cutlass::gemm::GemmShape<64, 64, 16>;\n"
+    "    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 8>;\n"
     "    using ThreadblockSwizzle =\n"
     "        cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<8>;\n"
-    "    constexpr int Stages = 2;\n"
+    "    constexpr int Stages = 3;\n"
     "\n"
     "    using Gemm = cutlass::gemm::device::GemmUniversal<\n"
     "        ElementA, LayoutA, ElementB, LayoutB, ElementOutput,\n"
@@ -307,26 +306,25 @@ constexpr const char* gemm_fusion_template =
     "\n"
     "    cudaStream_t stream = static_cast<cudaStream_t>(stream_);\n"
     "    status = gemm_op.initialize(arguments, workspace.get(), stream);\n"
-    // "    status = gemm_op.initialize(arguments, workspace.get());\n"
     "    if (status != cutlass::Status::kSuccess) {\n"
     "      return false;\n"
     "    }\n"
-    "#if 0\n"
+    "#if 1\n"
     "    ElementAType* A_host = (ElementAType*)malloc(sizeof(ElementAType) * batch_size_ * m_ * k_);\n"
     "    ElementAType* B_host = (ElementBType*)malloc(sizeof(ElementBType) * batch_size_ * k_ * n_);\n"
     "    cudaMemcpy(A_host, A_, sizeof(ElementAType) * batch_size_ * m_ * k_, cudaMemcpyDefault);\n"
     "    cudaMemcpy(B_host, B_, sizeof(ElementBType) * batch_size_ * k_ * n_, cudaMemcpyDefault);\n"
-    "    for (int b = 0; b < batch_size_; b++) {\n"
-    "      for (int m = 0; m < m_; m++) {\n"
-    "        for (int k = 0; k < k_; k++) {\n"
+    "    for (int b = 0; b < 2; b++) {\n"
+    "      for (int m = 0; m < 4; m++) {\n"
+    "        for (int k = 0; k < 4; k++) {\n"
     "          std::cout << \"A val at \" << b << \",\" << m << \",\" << k << \": \"\n"
     "                    << A_host[b * m_ * k_ + m * k_ + k] << std::endl;\n"
     "        }\n"
     "      }\n"
     "    }\n"
-    "    for (int b = 0; b < batch_size_; b++) {\n"
-    "      for (int k = 0; k < k_; k++) {\n"
-    "        for (int n = 0; n < n_; n++) {\n"
+    "    for (int b = 0; b < 2; b++) {\n"
+    "      for (int k = 0; k < 4; k++) {\n"
+    "        for (int n = 0; n < 4; n++) {\n"
     "          std::cout << \"B val at \" << b << \",\" << k << \",\" << n <<\": \"\n"
     "                    << B_host[b * k_ * n_ + k * n_ + n] << std::endl;\n"
     "        }\n"
@@ -454,7 +452,8 @@ struct DiscCompIntensFusionToCUDASourcePass
 
 bool DiscCompIntensFusionToCUDASourcePass::isHeavyEpilogue(func::FuncOp func) {
   // TODO: check whether it is heavy or not according to the logic in CUTLASS.
-  return false;
+  // return false;
+  return true;
 }
 
 bool DiscCompIntensFusionToCUDASourcePass::getCUDATypeString(
@@ -563,7 +562,8 @@ bool DiscCompIntensFusionToCUDASourcePass::getSMArchString(
 bool DiscCompIntensFusionToCUDASourcePass::getScaleKindString(
     std::string& scale_kind) {
   // TODO: update according to the problem.
-  scale_kind = "cutlass::epilogue::thread::ScaleType::NoBetaScaling";
+  // scale_kind = "cutlass::epilogue::thread::ScaleType::NoBetaScaling";
+  scale_kind = "cutlass::epilogue::thread::ScaleType::Nothing";
   return true;
 }
 

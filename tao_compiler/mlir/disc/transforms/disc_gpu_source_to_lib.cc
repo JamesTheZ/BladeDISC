@@ -105,6 +105,9 @@ LogicalResult DiscGPUSourceToLibPass::executeProgram(
 }
 
 std::string DiscGPUSourceToLibPass::getArchStr() {
+#if 1
+  return "-gencode=arch=compute_86,code=sm_86";
+#endif
   std::string arch = std::to_string(cc_major_) + std::to_string(cc_minor_);
   return "-gencode=arch=compute_" + arch + ",code=sm_" + arch;
 }

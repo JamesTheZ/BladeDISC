@@ -1,5 +1,7 @@
 #include "tensorflow/compiler/mlir/disc/utils/source_emitter.h"
 
+#include <sstream>
+
 #include "mlir-hlo/Dialect/lhlo/IR/lhlo_ops.h"
 #include "mlir-hlo/Dialect/mhlo/IR/hlo_ops.h"
 #include "tensorflow/compiler/mlir/disc/IR/lhlo_disc_ops.h"
@@ -11,6 +13,13 @@ namespace disc_ral {
 using ValueNameBinding = SourceEmitterCUDA::ValueNameBinding;
 
 namespace {
+
+template <typename Type>
+std::string to_string(const Type& data) {
+  std::ostringstream os;
+  os << data;
+  return os.str();
+}
 
 template <typename OPType>
 std::string CUDAMathFuncName(Type type) {
@@ -400,9 +409,9 @@ llvm::Optional<std::string> SourceEmitterCUDA::EmitElemWiseTernaryOp(
     expression = input0_str + " ? " + input1_str + " : " + input2_str;
   } else if (isa<lmhlo::ClampOp>(op)) {
     result_name = EmitUniqueName("clamp");
-    expression = input0_str + " < " + input1_str + " ? " + input1_str + " : (" +
-                 input0_str + " > " + input2_str + " ? " + input2_str + " : " +
-                 input0_str + ")";
+    expression = input1_str + " < " + input0_str + " ? " + input0_str + " : (" +
+                 input1_str + " > " + input2_str + " ? " + input2_str + " : " +
+                 input1_str + ")";
   }
 
   assert(binding.count(op->getOperand(3)) == 0);
@@ -427,13 +436,13 @@ SourceEmitterCUDA::EmitScalarOrSplatConstantExpression(
     int64_t val =
         is_splat ? constant.getValue().getSplatValue<APInt>().getSExtValue()
                  : constant.getValue().getValues<APInt>()[{}].getSExtValue();
-    expression = std::to_string(val);
+    expression = to_string(val);
   } else if (isa<mlir::FloatType>(elem_ty)) {
     double val =
         is_splat
             ? constant.getValue().getSplatValue<APFloat>().convertToDouble()
             : constant.getValue().getValues<APFloat>()[{}].convertToDouble();
-    expression = std::to_string(val);
+    expression = to_string(val);
   } else {
     return llvm::None;
   }
@@ -534,7 +543,7 @@ std::string SourceEmitterCUDA::EmitUniqueName(llvm::StringRef op_str) {
     existing_names_.try_emplace(op_str.str(), 0);
   }
   int32_t count = existing_names_[op_str.str()]++;
-  name += "_" + std::to_string(count);
+  name += "_" + to_string(count);
 
   return name;
 }
