@@ -1836,6 +1836,18 @@ cc_library(
     alwayslink = 1,
 )
 
+genrule(
+  name = "cutlass_header_preprocess",
+  srcs = ["cutlass", "utils/cutlass_required_headers.cu"],
+  outs = [
+      "utils/cutlass_header_preprocess.cpp1.ii",
+      "utils/cutlass_header_preprocess.cpp4.ii"],
+  cmd = """
+        UTILS_DIR=$$(dirname $(location utils/cutlass_required_headers.cu));
+        bash $${UTILS_DIR}/preprocess_cutlass_headers.sh $(SRCS) $(OUTS);
+        """
+)
+
 cc_library(
     name = "disc_gpu_source_to_lib",
     srcs = ["transforms/disc_gpu_source_to_lib.cc"],
@@ -1845,6 +1857,9 @@ cc_library(
         ":pass_details",
         "@llvm-project//mlir:Pass",
         "//tensorflow/core:lib",
+    ],
+    data = [
+        ":cutlass_header_preprocess",
     ],
     alwayslink = 1,
 )
