@@ -105,7 +105,7 @@ bool isMemIntensiveOptExperimentalEnabled();
 // Returns true if `DISC_ENABLE_STITCH` is true.
 bool isStitchEnabled();
 
-// Returns true if `DISC_ENABLE_DOT_FUSE` is true.
+// Returns true if `DISC_ENABLE_COMPUTE_INTENSIVE_FUSE` is true.
 bool isCompIntensFusionEnabled();
 
 // Returns data users of the value and its aliases (e.g. memref.cast).

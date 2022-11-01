@@ -240,7 +240,7 @@ bool isStitchEnabled() {
 bool isCompIntensFusionEnabled() {
   static bool enabled = []() {
     bool enabled = false;
-    tensorflow::ReadBoolFromEnvVar("DISC_ENABLE_DOT_FUSE", enabled, &enabled);
+    tensorflow::ReadBoolFromEnvVar("DISC_ENABLE_COMPUTE_INTENSIVE_FUSE", enabled, &enabled);
     return enabled;
   }();
   return enabled;
