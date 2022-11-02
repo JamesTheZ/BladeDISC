@@ -1823,7 +1823,9 @@ cc_library(
 
 cc_library(
     name = "disc_comp_intens_fusion_to_cuda_source",
-    srcs = ["transforms/disc_comp_intens_fusion_to_cuda_source.cc"],
+    srcs = [
+        "transforms/disc_comp_intens_fusion_to_cuda_source.cc",
+        "utils/gemm_fusion_linear_base_template.h"],
     deps = [
         ":disc_util",
         ":pass_details",
