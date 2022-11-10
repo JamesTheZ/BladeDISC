@@ -10,6 +10,9 @@ module attributes {tf.versions = {bad_consumers = [], min_consumer = 0 : i32, pr
       %cstbcast:2 = tf_executor.island wraps "tf.BroadcastTo"(%cst, %shape) : (tensor<f32>, tensor<4xi32>) -> tensor<?x?x?x?xf32>
       // x * rsqrt(2)
       %1:2 = tf_executor.island wraps "tf.Mul"(%0, %cstbcast) : (tensor<?x?x?x?xf32>, tensor<?x?x?x?xf32>) -> tensor<?x?x?x?xf32>
+
+      // tf_executor.fetch %1 : tensor<?x?x?x?xf32>
+
       // erf(...)
       %2:2 = tf_executor.island wraps "tf.Erf"(%1) : (tensor<?x?x?x?xf32>) -> (tensor<?x?x?x?xf32>)
       // 1 + erf(...)

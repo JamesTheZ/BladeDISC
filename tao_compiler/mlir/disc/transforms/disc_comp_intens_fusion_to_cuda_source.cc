@@ -103,6 +103,15 @@ struct DiscCompIntensFusionToCUDASourcePass
 
   void getResults(func::FuncOp func, SmallVector<Value>& results);
   void getEffectiveOperands(func::FuncOp func, SmallVector<Value>& operands);
+
+  void mayConvertAndBindInput(Value input, std::string orig_name,
+                              SourceEmitterCUDA::ValueNameBinding& binding);
+  bool mayConvertCutlassTypeToCUDAType(
+      Value value, std::string old_name, std::string& new_name,
+      SmallVectorImpl<std::string>& convert_instructions);
+  bool mayConvertCUDATypeToCutlassType(
+      Value value, std::string old_name, std::string& new_name,
+      SmallVectorImpl<std::string>& convert_instructions);
 };
 
 bool DiscCompIntensFusionToCUDASourcePass::isHeavyEpilogue(func::FuncOp func) {
@@ -318,6 +327,54 @@ void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperands(
   });
 }
 
+bool DiscCompIntensFusionToCUDASourcePass::mayConvertCutlassTypeToCUDAType(
+    Value value, std::string old_name, std::string& new_name,
+    SmallVectorImpl<std::string>& convert_instructions) {
+  convert_instructions.clear();
+  auto type = value.getType().dyn_cast<MemRefType>().getElementType();
+  if (type.isF32() || type.isF64()) {
+    new_name = old_name;
+  } else if (type.isF16()) {
+    // CUTLASS type is 'cutlass::half_t'.
+    new_name = old_name + "_to_cuda_half";
+    convert_instructions.push_back("half " + new_name + " = " + old_name +
+                                   ".to_half()");
+  } else {
+    assert(false && "unsupported type for data conversion");
+    return false;
+  }
+
+  // TODO: support the following types:
+  // cutlass::uint1b_t, cutlass::int8b_t, cutlass::uint8b_t, cutlass::int32b_t,
+  // cutlass::uint32b_t, cutlass::bfloat16_t
+
+  return true;
+}
+
+bool DiscCompIntensFusionToCUDASourcePass::mayConvertCUDATypeToCutlassType(
+    Value value, std::string old_name, std::string& new_name,
+    SmallVectorImpl<std::string>& convert_instructions) {
+  convert_instructions.clear();
+  auto type = value.getType().dyn_cast<MemRefType>().getElementType();
+  if (type.isF32() || type.isF64()) {
+    new_name = old_name;
+  } else if (type.isF16()) {
+    // CUTLASS type is 'cutlass::half_t'.
+    new_name = old_name + "_to_cutlass_half";
+    convert_instructions.push_back("cutlass::half_t " + new_name +
+                                   " = cutlass::half_t(" + old_name + ")");
+  } else {
+    assert(false && "unsupported type for data conversion");
+    return false;
+  }
+
+  // TODO: support the following types:
+  // cutlass::uint1b_t, cutlass::int8b_t, cutlass::uint8b_t, cutlass::int32b_t,
+  // cutlass::uint32b_t, cutlass::bfloat16_t
+
+  return true;
+}
+
 bool DiscCompIntensFusionToCUDASourcePass::
     generateCUDASourceForCompIntensFusionFunc(func::FuncOp func) {
   std::string cuda_code =
@@ -401,9 +458,24 @@ bool DiscCompIntensFusionToCUDASourcePass::
   SourceEmitterCUDA::ValueNameBinding binding;
   for (auto& op : func.getRegion().getOps()) {
     if (isa<lmhlo::DotGeneralOp>(&op)) {
-      source_emitter.bindValueNames(SmallVector<Value>({op.getOperand(2)}),
-                                    SmallVector<std::string>({"input"}),
+      // Convert CUTLASS datatype to default cuda datatype for computation.
+      Value dot_output = op.getOperand(2);
+      std::string old_name = "input";
+      std::string new_name;
+      SmallVector<std::string> convert_instructions;
+      if (!mayConvertCutlassTypeToCUDAType(dot_output, old_name, new_name,
+                                           convert_instructions)) {
+        return false;
+      }
+      source_emitter.bindValueNames(SmallVector<Value>({dot_output}),
+                                    SmallVector<std::string>({new_name}),
                                     binding);
+      for (auto& instruction : convert_instructions) {
+        specialized_epilogue += intent + instruction + ";\n";
+      }
+      // source_emitter.bindValueNames(SmallVector<Value>({op.getOperand(2)}),
+      // SmallVector<std::string>({"input"}),
+      // binding);
     } else if (!isa<func::ReturnOp>(&op)) {
       assert(source_emitter.isSupportedOp(&op) && "Encounter unsupported op.");
       auto instruction = source_emitter.EmitOp(&op, binding);
@@ -418,11 +490,22 @@ bool DiscCompIntensFusionToCUDASourcePass::
   SmallVector<Value> results;
   getResults(func, results);
   // Only support one result currently.
+  // TODO: support more outputs.
   if (results.size() != 1) {
     return false;
   }
-  std::string result_name = binding[results[0]];
-  specialized_epilogue += intent + "return " + result_name + ";";
+  Value result = results[0];
+  std::string old_name = binding[result];
+  std::string new_name;
+  SmallVector<std::string> convert_result_instructions;
+  if (!mayConvertCUDATypeToCutlassType(result, old_name, new_name,
+                                       convert_result_instructions)) {
+    return false;
+  }
+  for (auto& instruction : convert_result_instructions) {
+    specialized_epilogue += intent + instruction + ";\n";
+  }
+  specialized_epilogue += intent + "return " + new_name + ";";
 
   // Replace newly generated code in the template.
   stringReplaceInplace(cuda_code, kSpecializedClassName, specialized_class_name,
@@ -518,7 +601,9 @@ void DiscCompIntensFusionToCUDASourcePass::runOnOperation() {
   });
 
   for (auto func : comp_intens_fusions) {
-    generateCUDASourceForCompIntensFusionFunc(func);
+    if (!generateCUDASourceForCompIntensFusionFunc(func)) {
+      signalPassFailure();
+    }
   }
 }
 

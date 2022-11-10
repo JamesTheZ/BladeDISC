@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "cutlass/gemm/device/gemm_universal.h"
+#include "cutlass/half.h"
 #include "cutlass/util/device_memory.h"
 
 // This file maintains the headers required by the schedule of CUTLASS-based

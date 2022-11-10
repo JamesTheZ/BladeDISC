@@ -4,7 +4,7 @@ class SpecializedGemmFusion {
  public:
   template <typename T>
   struct ElementwiseUnaryOp {
-    __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+    __inline__ __attribute__((always_inline)) __attribute__((device))
     T operator()(T const& input) const {
       return input;
     }
@@ -14,7 +14,7 @@ class SpecializedGemmFusion {
   struct EpilogueFunctor {
     static const bool kIsHeavy = EpilogueIsHeavy;
 
-    __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+    __inline__ __attribute__((always_inline)) __attribute__((device))
     T operator()(T const& scalar) const {
       ElementwiseUnaryOp<T> op;
 
@@ -24,7 +24,7 @@ class SpecializedGemmFusion {
     using Params =
         cutlass::epilogue::thread::LinearCombinationGenericParams<T>;
 
-    __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+    __inline__ __attribute__((always_inline)) __attribute__((device))
     T operator()(T const& scalar, Params const& params_) const {
       return this->operator()(scalar);
     }
@@ -34,7 +34,7 @@ class SpecializedGemmFusion {
   struct EpilogueFunctor<cutlass::Array<T, N>> {
     static const bool kIsHeavy = EpilogueIsHeavy;
 
-    __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+    __inline__ __attribute__((always_inline)) __attribute__((device))
     cutlass::Array<T, N> operator()(cutlass::Array<T, N>
                                     const& frag) const {
       cutlass::Array<T, N> result;
@@ -51,7 +51,7 @@ class SpecializedGemmFusion {
     using Params =
         cutlass::epilogue::thread::LinearCombinationGenericParams<T>;
 
-    __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+    __inline__ __attribute__((always_inline)) __attribute__((device))
     cutlass::Array<T, N> operator()(cutlass::Array<T, N> const& frag,
                                     Params const& params_) const {
       return this->operator()(frag);
@@ -85,7 +85,7 @@ class SpecializedGemmFusion {
 
 template <>
 struct SpecializedGemmFusion::ElementwiseUnaryOp<EpilogueElementType> {
-  __inline__ __attribute__((always_inline)) __attribute__((device)) __attribute__((host))
+  __inline__ __attribute__((always_inline)) __attribute__((device))
   EpilogueElementType operator()(
       EpilogueElementType const& input) const {
 SpecializedEpilogue
@@ -93,6 +93,30 @@ SpecializedEpilogue
 };
 
 bool SpecializedGemmFusion::run() {
+  bool debug_input = true;
+  if (debug_input) {
+    ElementAType* A_host = (ElementAType*)malloc(sizeof(ElementAType) * batch_size_ * m_ * k_);
+    ElementAType* B_host = (ElementBType*)malloc(sizeof(ElementBType) * batch_size_ * k_ * n_);
+    cudaMemcpy(A_host, A_, sizeof(ElementAType) * batch_size_ * m_ * k_, cudaMemcpyDefault);
+    cudaMemcpy(B_host, B_, sizeof(ElementBType) * batch_size_ * k_ * n_, cudaMemcpyDefault);
+    for (int b = 0; b < 2; b++) {
+      for (int m = 0; m < 4; m++) {
+        for (int k = 0; k < 4; k++) {
+          std::cout << "A val at " << b << "," << m << "," << k << ": "
+                    << A_host[b * m_ * k_ + m * k_ + k] << std::endl;
+        }
+      }
+    }
+    for (int b = 0; b < 2; b++) {
+      for (int k = 0; k < 4; k++) {
+        for (int n = 0; n < 4; n++) {
+          std::cout << "B val at " << b << "," << k << "," << n <<": "
+                    << B_host[b * k_ * n_ + k * n_ + n] << std::endl;
+        }
+      }
+    }
+  }
+
   constexpr cutlass::FloatRoundStyle Round =
       cutlass::FloatRoundStyle::round_to_nearest;
   constexpr cutlass::ComplexTransform TransformA =
@@ -119,14 +143,6 @@ bool SpecializedGemmFusion::run() {
       cutlass::epilogue::thread::LinearCombinationGeneric<
           EpilogueFunctor, ElementOutput, Count, ElementAccumulator,
           ElementComputeEpilogue, Scale, Round, IsHeavy>;
-
-  using GemmConfiguration =
-      cutlass::gemm::device::DefaultGemmConfiguration<
-          OperatorClass, ArchTag, ElementA, ElementB, ElementOutput,
-          ElementAccumulator>;
-  constexpr int AlignmentA = GemmConfiguration::kAlignmentA;
-  constexpr int AlignmentB = GemmConfiguration::kAlignmentB;
-  using Operator = GemmConfiguration::Operator;
 
   constexpr bool GatherA = IsGatherA;
   constexpr bool GatherB = IsGatherB;
@@ -164,17 +180,29 @@ bool SpecializedGemmFusion::run() {
   int const* ptr_gather_B_indices = nullptr;
   int const* ptr_scatter_D_indices = nullptr;
 
+  cudaStream_t stream = static_cast<cudaStream_t>(stream_);
 
-  if (true) {
-    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 16>;
-    using WarpShape = cutlass::gemm::GemmShape<64, 64, 16>;
-    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 8>;
+  int i_am_comment_the_following_rules_will_be_enriched;
+  if (std::is_same<ElementA, cutlass::half_t>::value &&
+      std::is_same<ElementB, cutlass::half_t>::value &&
+      std::is_same<ElementOutput, cutlass::half_t>::value) {
+    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;
+    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 16>;
     using ThreadblockSwizzle =
         cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<8>;
     constexpr int Stages = 3;
 
+    using GemmConfiguration =
+        cutlass::gemm::device::DefaultGemmConfiguration<
+            OperatorClass, ArchTag, cutlass::half_t, cutlass::half_t, cutlass::half_t,
+            ElementAccumulator>;
+    constexpr int AlignmentA = GemmConfiguration::kAlignmentA;
+    constexpr int AlignmentB = GemmConfiguration::kAlignmentB;
+    using Operator = GemmConfiguration::Operator;
+
     using Gemm = cutlass::gemm::device::GemmUniversal<
-        ElementA, LayoutA, ElementB, LayoutB, ElementOutput,
+        cutlass::half_t, LayoutA, cutlass::half_t, LayoutB, cutlass::half_t,
         LayoutOutput, ElementAccumulator, OperatorClass, ArchTag,
         ThreadblockShape, WarpShape, InstructionShape,
         EpilogueOutputOp, ThreadblockSwizzle, Stages, AlignmentA,
@@ -211,39 +239,82 @@ bool SpecializedGemmFusion::run() {
       return false;
     }
 
-    cudaStream_t stream = static_cast<cudaStream_t>(stream_);
     status = gemm_op.initialize(arguments, workspace.get(), stream);
     if (status != cutlass::Status::kSuccess) {
       return false;
     }
-    if (true) {
-      ElementAType* A_host = (ElementAType*)malloc(sizeof(ElementAType) * batch_size_ * m_ * k_);
-      ElementAType* B_host = (ElementBType*)malloc(sizeof(ElementBType) * batch_size_ * k_ * n_);
-      cudaMemcpy(A_host, A_, sizeof(ElementAType) * batch_size_ * m_ * k_, cudaMemcpyDefault);
-      cudaMemcpy(B_host, B_, sizeof(ElementBType) * batch_size_ * k_ * n_, cudaMemcpyDefault);
-      for (int b = 0; b < 2; b++) {
-        for (int m = 0; m < 4; m++) {
-          for (int k = 0; k < 4; k++) {
-            std::cout << "A val at " << b << "," << m << "," << k << ": "
-                      << A_host[b * m_ * k_ + m * k_ + k] << std::endl;
-          }
-        }
-      }
-      for (int b = 0; b < 2; b++) {
-        for (int k = 0; k < 4; k++) {
-          for (int n = 0; n < 4; n++) {
-            std::cout << "B val at " << b << "," << k << "," << n <<": "
-                      << B_host[b * k_ * n_ + k * n_ + n] << std::endl;
-          }
-        }
-      }
-    }
-
     status = gemm_op();
     if (status != cutlass::Status::kSuccess) {
       return false;
     }
+  } else if (std::is_same<ElementA, float>::value &&
+      std::is_same<ElementB, float>::value &&
+      std::is_same<ElementOutput, float>::value) {
+    using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 16>;
+    using WarpShape = cutlass::gemm::GemmShape<64, 64, 16>;
+    using InstructionShape = cutlass::gemm::GemmShape<16, 8, 8>;
+    using ThreadblockSwizzle =
+        cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<8>;
+    constexpr int Stages = 3;
+
+    using GemmConfiguration =
+        cutlass::gemm::device::DefaultGemmConfiguration<
+            OperatorClass, ArchTag, float, float, float,
+            ElementAccumulator>;
+    constexpr int AlignmentA = GemmConfiguration::kAlignmentA;
+    constexpr int AlignmentB = GemmConfiguration::kAlignmentB;
+    using Operator = GemmConfiguration::Operator;
+
+    using Gemm = cutlass::gemm::device::GemmUniversal<
+        float, LayoutA, float, LayoutB, float,
+        LayoutOutput, ElementAccumulator, OperatorClass, ArchTag,
+        ThreadblockShape, WarpShape, InstructionShape,
+        EpilogueOutputOp, ThreadblockSwizzle, Stages, AlignmentA,
+        AlignmentB, Operator, TransformA, TransformB, GatherA, GatherB,
+        ScatterD, PermuteDLayout>;
+
+    typename Gemm::Arguments arguments{mode,
+                                       problem_size,
+                                       static_cast<int>(batch_size_),
+                                       epilogue,
+                                       A_,
+                                       B_,
+                                       nullptr,
+                                       D_,
+                                       batch_stride_A,
+                                       batch_stride_B,
+                                       batch_stride_C,
+                                       batch_stride_D,
+                                       lda,
+                                       ldb,
+                                       ldc,
+                                       ldd,
+                                       ptr_gather_A_indices,
+                                       ptr_gather_B_indices,
+                                       ptr_scatter_D_indices};
+
+    size_t workspace_size = Gemm::get_workspace_size(arguments);
+    cutlass::device_memory::allocation<uint8_t>
+        workspace(workspace_size);
+
+    Gemm gemm_op;
+    cutlass::Status status = gemm_op.can_implement(arguments);
+    if (status != cutlass::Status::kSuccess) {
+      return false;
+    }
+
+    status = gemm_op.initialize(arguments, workspace.get(), stream);
+    if (status != cutlass::Status::kSuccess) {
+      return false;
+    }
+    status = gemm_op();
+    if (status != cutlass::Status::kSuccess) {
+      return false;
+    }
+  } else {
+    return false;
   }
+
   return true;
 }
 
