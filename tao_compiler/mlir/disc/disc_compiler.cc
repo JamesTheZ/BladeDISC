@@ -257,7 +257,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   // it to sparse if its meet condition.
   bool enable_sparse = false;
   tensorflow::ReadBoolFromEnvVar("DISC_ENABLE_SPARSE", false, &enable_sparse);
-  if (!enable_sparse) {
+  if (!enable_sparse && !isCompIntensFusionEnabled()) {
     // Either merge dots to batched dot or merge dots sharing the same operand.
     pm.addNestedPass<FuncOp>(disc_ral::createDiscDotMergePass());
   }

@@ -1448,6 +1448,8 @@ std::unique_ptr<FusionStrategy> makeNewDeviceStrategy(StringRef device,
     return std::make_unique<StitchGpuFusionStrategy>(options);
   } else if (device == placement_utils::kCpu && strategy == "stitch_base") {
     return std::make_unique<StitchBaseCpuFusionStrategy>(options);
+  } else if (device == placement_utils::kGpu && strategy == "dot_hmerge") {
+    return std::make_unique<DotHMergeGpuFusionStrategy>(options);
   } else if (device == placement_utils::kGpu && strategy == "pre_dot") {
     return std::make_unique<PreDotGpuFusionStrategy>(options);
   } else if (device == placement_utils::kGpu && strategy == "dot") {

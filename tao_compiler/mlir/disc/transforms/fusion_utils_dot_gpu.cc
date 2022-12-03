@@ -122,6 +122,66 @@ Value PreDotGpuFusionStrategy::getEffectiveShape(FusionPattern& target,
   return v;
 }
 
+bool DotHMergeGpuFusionStrategy::isFusible(Operation* op) {
+  if (isa<lmhlo::DotGeneralOp>(op)) {
+    // Only support rank-2 dot merging due to the codegen limitation of cutlass.
+    MemRefType type = op->getOperand(0).getType().cast<MemRefType>();
+    return type.getRank() == 2;
+  }
+  return false;
+}
+
+bool DotHMergeGpuFusionStrategy::isFusible(FusionPattern& fusion_pattern) {
+  for (Operation* op : fusion_pattern.getOpList()) {
+    if (!isFusible(op)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool DotHMergeGpuFusionStrategy::initFusionPattern(
+    ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern) {
+  // Currently, we simply fuse DotGeneralOp together if they have same problem
+  // size and are not producer-consumers.
+  // TODO: identify the possible alignment of the dot ops. Only the ops sharing
+  // the same alignment could be fused together.
+
+  auto& op_list = fusion_pattern.getOpList();
+
+  // Not producer-consumers.
+  DenseSet<Value> dot_inputs;
+  DenseSet<Value> dot_outputs;
+  for (auto op : op_list) {
+    if (!isa<lmhlo::DotGeneralOp>(op)) {
+      return false;
+    }
+    dot_inputs.insert(op->getOperand(0));
+    dot_inputs.insert(op->getOperand(1));
+    dot_outputs.insert(op->getOperand(2));
+  }
+  int check_num = dot_inputs.size() + dot_outputs.size();
+  dot_inputs.insert(dot_outputs.begin(), dot_outputs.end());
+  if (check_num != dot_inputs.size()) {
+    return false;
+  }
+
+  // Have same problem sizes.
+  for (int i = 1; i < op_list.size(); i++) {
+    if (!shapeAnalysis.isShapeEqual(op_list[0]->getOperand(0),
+                                    op_list[i]->getOperand(0)) ||
+        !shapeAnalysis.isShapeEqual(op_list[0]->getOperand(1),
+                                    op_list[i]->getOperand(1))) {
+      return false;
+    }
+  }
+
+  fusion_pattern.setFusionType(FusionType::kDot);
+  fusion_pattern.setDominantOp(fusion_pattern.getOpList()[0]);
+
+  return true;
+}
+
 bool DotGpuFusionStrategy::isFusible(Operation* op) {
   return isa<lmhlo::DotGeneralOp>(op) || isOpFusible(op);
 }
@@ -163,6 +223,13 @@ bool DotGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
   // Only one dot.
   if (dot_ops.size() != 1) {
     return false;
+  }
+
+  // All ops are supported by CUDA source emitter.
+  for (auto op : mem_intensive_ops) {
+    if (!isFusible(op)) {
+      return false;
+    }
   }
 
   // All the effective-operand of non-dot ops are not the operand of the fusion.
@@ -294,8 +361,8 @@ bool DotGpuFusionStrategy::finalizeFusionPattern(
       dots.push_back(op);
     }
   }
-  if (dots.empty()) {
-    // Not kDot fusion. Do not deal with it.
+  if (dots.size() != 1) {
+    // Not DotGpuFusionStrategy fusion. Do not deal with it.
     return true;
   }
 
@@ -402,9 +469,6 @@ bool DotGpuFusionStrategy::tryFuse(ShapeAnalysis& shapeAnalysis,
     // too many arguments.
     return false;
   }
-
-  // TODO: ConstantOp is allowed to be fused as the output op temporarily, which
-  // will be moved out in a later pass.
 
   LLVM_DEBUG(llvm::dbgs() << "DotGpuFusionStrategy::tryFuse success()\n");
   return true;

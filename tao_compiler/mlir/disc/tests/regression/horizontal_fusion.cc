@@ -41,4 +41,25 @@ TEST(HorizontalTensor, BasicTest) {
   unsetenv("DISC_ENABLE_STITCH");
 }
 
+// Fusion multiple GEMM and generate code.
+TEST(HorizontalTensor, DotHMergeCodegenTest) {
+  setenv("DISC_ENABLE_COMPUTE_INTENSIVE_FUSE", "true", 1);
+  setenv("DISC_ENABLE_STITCH", "true", 1);
+  setenv("DISC_ENABLE_HORIZONTAL_FUSION", "true", 1);
+  setenv("DISC_ENABLE_SHAPE_CONSTRAINT_IR", "true", 1);
+  setenv("DISC_EXPECTED_KERNELS_IN_UT", "2", 1);
+  EXPECT_TRUE(feature_test_main(
+      /*mlir_file_path*/ c_ft_path + "horizontal_fusion_dot_hmerge.mlir",
+      /*backend_types*/ {BackendType::kCuda},
+      /*num_inputs*/ 2,
+      /*num_outputs*/ 3,
+      /*input_descriptors*/ {"128x768xf16_X", "768x768xf16_X"},
+      /*output_descriptors*/ {"f16_X", "f16_X", "f16_X"}));
+  unsetenv("DISC_EXPECTED_KERNELS_IN_UT");
+  unsetenv("DISC_ENABLE_HORIZONTAL_FUSION");
+  unsetenv("DISC_ENABLE_SHAPE_CONSTRAINT_IR");
+  unsetenv("DISC_ENABLE_STITCH");
+  unsetenv("DISC_ENABLE_COMPUTE_INTENSIVE_FUSE");
+}
+
 }  // namespace mlir_test

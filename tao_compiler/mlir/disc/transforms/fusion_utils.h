@@ -818,6 +818,22 @@ class DotGpuFusionStrategy : public FusionStrategy {
   SmallVector<Value> getEffectiveOperands(Operation* op);
 };
 
+class DotHMergeGpuFusionStrategy : public FusionStrategy {
+ public:
+  DotHMergeGpuFusionStrategy(const FusionOptions& options)
+      : FusionStrategy(options) {}
+
+  virtual bool isFusible(Operation* op) override;
+  virtual bool isFusible(FusionPattern& fusion_pattern) override;
+  virtual bool initFusionPattern(ShapeAnalysis& shapeAnalysis,
+                                 FusionPattern& fusion_pattern) override;
+
+  virtual StringRef getName() override { return "DotHMergeGpuFusionStrategy"; }
+
+  //  private:
+  // SmallVector<Value> getEffectiveOperands(Operation* op);
+};
+
 class TransformBasedCpuFusionStrategy : public FusionStrategy {
  public:
   TransformBasedCpuFusionStrategy(const FusionOptions& options)

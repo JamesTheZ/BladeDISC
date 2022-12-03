@@ -29,6 +29,7 @@ constexpr const char* kSpecializedClassName = "__SpecializedGemmFusion__";
 constexpr const char* kSpecializedEpilogue = "__SpecializedEpilogue__";
 constexpr const char* kEpilogueIsHeavy = "__EpilogueIsHeavy__";
 
+constexpr const char* kGNum = "__GEMM_NUM__";
 constexpr const char* kGRank = "__GRank__";
 constexpr const char* kElementAType = "__ElementAType__";
 constexpr const char* kElementALayout = "__ElementALayout__";
@@ -90,8 +91,9 @@ struct DiscCompIntensFusionToCUDASourcePass
                                std::string& permute_d_layout);
   bool getBatchStrideDString(func::FuncOp func, std::string& batch_stride_d);
 
-  void getResults(func::FuncOp func, SmallVector<Value>& results);
-  void getEffectiveOperands(func::FuncOp func, SmallVector<Value>& operands);
+  void getEffectiveOperandsAndResults(func::FuncOp func,
+                                      SmallVector<Value>& operands,
+                                      SmallVector<Value>& results);
 
   void mayConvertAndBindInput(Value input, std::string orig_name,
                               SourceEmitterCUDA::ValueNameBinding& binding);
@@ -310,34 +312,9 @@ bool DiscCompIntensFusionToCUDASourcePass::getBatchStrideDString(
   return true;
 }
 
-void DiscCompIntensFusionToCUDASourcePass::getResults(
-    func::FuncOp func, SmallVector<Value>& results) {
-  DenseSet<Operation*> op_set;
-  auto ops = func.getRegion().getOps();
-  for (auto& op : func.getRegion().getOps()) {
-    op_set.insert(&op);
-  }
-
-  results.clear();
-  func.walk([&](Operation* op) {
-    int num_input_operand = op->getNumOperands() - getNumResultOperands(op);
-    for (Value v : op->getOperands().drop_front(num_input_operand)) {
-      bool has_internal_user = false;
-      for (Operation* user : getValueUsers(v)) {
-        if (op == user) {
-          continue;
-        }
-        has_internal_user |= op_set.contains(user);
-      }
-      if (!has_internal_user) {
-        results.push_back(v);
-      }
-    }
-  });
-}
-
-void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperands(
-    func::FuncOp func, SmallVector<Value>& operands) {
+void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperandsAndResults(
+    func::FuncOp func, SmallVector<Value>& operands,
+    SmallVector<Value>& results) {
   DenseSet<Operation*> op_set;
   auto ops = func.getRegion().getOps();
   for (auto& op : func.getRegion().getOps()) {
@@ -345,6 +322,7 @@ void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperands(
   }
 
   operands.clear();
+  results.clear();
   func.walk([&](Operation* op) {
     SmallVector<Value> ins;
     if (isa<lmhlo::ConstantOp>(op)) {
@@ -369,8 +347,25 @@ void DiscCompIntensFusionToCUDASourcePass::getEffectiveOperands(
             break;
           }
         }
-        if (!has_internal_writter) {
+        if (!has_internal_writter &&
+            (llvm::find(operands, v) == operands.end())) {
           operands.emplace_back(v);
+        }
+      }
+      for (Value v : op->getOperands().drop_front(op->getNumOperands() -
+                                                  getNumResultOperands(op))) {
+        bool has_internal_user = false;
+        for (Operation* user : getValueUsers(v)) {
+          if (op == user) {
+            continue;
+          }
+          if (op_set.contains(user)) {
+            has_internal_user = true;
+            break;
+          }
+        }
+        if (!has_internal_user && (llvm::find(results, v) == results.end())) {
+          results.emplace_back(v);
         }
       }
     }
@@ -427,21 +422,43 @@ bool DiscCompIntensFusionToCUDASourcePass::mayConvertCUDATypeToCutlassType(
 
 bool DiscCompIntensFusionToCUDASourcePass::
     generateCUDASourceForCompIntensFusionFunc(func::FuncOp func) {
+  bool is_horizontal_fusion = false;
+  SmallVector<Operation*> gemms;
+  func->walk([&](lmhlo::DotGeneralOp op) { gemms.push_back(op); });
+  if (gemms.empty()) {
+    return false;
+  } else if (gemms.size() > 1) {
+    is_horizontal_fusion = true;
+  }
+
   std::string cuda_code;
-  if (cc_major_ < 8) {
-    cuda_code =
-#include "tensorflow/compiler/mlir/disc/utils/gemm_fusion_linear_base_template_sm75.hpp"
-        ;
+  if (is_horizontal_fusion) {
+    if (cc_major_ < 8) {
+      cuda_code =
+#include "tensorflow/compiler/mlir/disc/utils/gemm_fusion_hmerge_base_template_sm75.hpp"
+          ;
+    } else {
+      cuda_code =
+#include "tensorflow/compiler/mlir/disc/utils/gemm_fusion_hmerge_base_template_sm80.hpp"
+          ;
+    }
   } else {
-    cuda_code =
+    if (cc_major_ < 8) {
+      cuda_code =
+#include "tensorflow/compiler/mlir/disc/utils/gemm_fusion_linear_base_template_sm75.hpp"
+          ;
+    } else {
+      cuda_code =
 #include "tensorflow/compiler/mlir/disc/utils/gemm_fusion_linear_base_template_sm80.hpp"
-        ;
+          ;
+    }
   }
 
   // Values to obtain according to func.
   std::string specialized_class_name;
   std::string specialized_epilogue;
   std::string epilogue_is_heavy;
+  std::string gemm_num;
   std::string gemm_rank;
   std::string element_a_type;
   std::string element_a_layout;
@@ -469,10 +486,6 @@ bool DiscCompIntensFusionToCUDASourcePass::
 
   epilogue_is_heavy = isHeavyEpilogue(func) ? "true" : "false";
 
-  SmallVector<Operation*> gemms;
-  func->walk([&](lmhlo::DotGeneralOp op) { gemms.push_back(op); });
-  // Currently, we only deal with the fusion with a single GEMM.
-  assert(gemms.size() == 1 && "GEMM number in kDot fusion is not 1.");
   lmhlo::DotGeneralOp dot = dyn_cast<lmhlo::DotGeneralOp>(gemms[0]);
   Value A = dot->getOperand(0);
   Value B = dot->getOperand(1);
@@ -482,6 +495,7 @@ bool DiscCompIntensFusionToCUDASourcePass::
   auto d_type = D.getType().dyn_cast<MemRefType>();
 
   gemm_rank = std::to_string(a_type.getRank());
+  gemm_num = std::to_string(gemms.size());
 
   if (!getCUDATypeString(a_type.getElementType(), element_a_type) ||
       !getCUDATypeString(b_type.getElementType(), element_b_type) ||
@@ -513,83 +527,117 @@ bool DiscCompIntensFusionToCUDASourcePass::
   gather_b = isGatherB(func) ? "true" : "false";
   scatter_d = isScatterD(func) ? "true" : "false";
 
+  SmallVector<Value> operands;
+  SmallVector<Value> results;
+  getEffectiveOperandsAndResults(func, operands, results);
+
   std::string intent = "    ";
   auto appendLineToEpilogue = [&](const std::string& instruction) {
     specialized_epilogue += intent + instruction + ";\n";
   };
-  SourceEmitterCUDA source_emitter;
-  SourceEmitterCUDA::ValueNameBinding binding;
-  for (auto& op : func.getRegion().getOps()) {
-    if (isa<lmhlo::DotGeneralOp>(&op)) {
-      // Convert CUTLASS datatype to default cuda datatype for computation.
-      Value dot_output = op.getOperand(2);
-      std::string old_name = "input";
-      std::string new_name;
-      SmallVector<std::string> convert_instructions;
-      if (!mayConvertCutlassTypeToCUDAType(dot_output, old_name, new_name,
-                                           convert_instructions)) {
-        return false;
-      }
-      source_emitter.bindValueNames(SmallVector<Value>({dot_output}),
-                                    SmallVector<std::string>({new_name}),
-                                    binding);
-      for (auto& instruction : convert_instructions) {
-        appendLineToEpilogue(instruction);
-      }
-    } else if (!isa<func::ReturnOp>(&op)) {
-      assert(source_emitter.isSupportedOp(&op) && "Encounter unsupported op.");
-      auto instruction = source_emitter.EmitOp(&op, binding);
-      if (!instruction.hasValue()) {
-        return false;
-      } else {
-        appendLineToEpilogue(instruction.value());
+  if (gemms.size() == 1) {
+    SourceEmitterCUDA source_emitter;
+    SourceEmitterCUDA::ValueNameBinding binding;
+    for (auto& op : func.getRegion().getOps()) {
+      if (isa<lmhlo::DotGeneralOp>(&op)) {
+        // Convert CUTLASS datatype to default cuda datatype for computation.
+        Value dot_output = op.getOperand(2);
+        std::string old_name = "input";
+        std::string new_name;
+        SmallVector<std::string> convert_instructions;
+        if (!mayConvertCutlassTypeToCUDAType(dot_output, old_name, new_name,
+                                             convert_instructions)) {
+          return false;
+        }
+        source_emitter.bindValueNames(SmallVector<Value>({dot_output}),
+                                      SmallVector<std::string>({new_name}),
+                                      binding);
+        for (auto& instruction : convert_instructions) {
+          appendLineToEpilogue(instruction);
+        }
+      } else if (!isa<func::ReturnOp>(&op)) {
+        assert(source_emitter.isSupportedOp(&op) &&
+               "Encounter unsupported op.");
+        auto instruction = source_emitter.EmitOp(&op, binding);
+        if (!instruction.hasValue()) {
+          return false;
+        } else {
+          appendLineToEpilogue(instruction.value());
+        }
       }
     }
+    // Append return instruction.
+    // Only support one result currently.
+    // TODO: support more outputs.
+    if (results.size() != 1) {
+      return false;
+    }
+    Value result = results[0];
+    std::string old_name = binding[result];
+    std::string new_name;
+    SmallVector<std::string> convert_result_instructions;
+    if (!mayConvertCUDATypeToCutlassType(result, old_name, new_name,
+                                         convert_result_instructions)) {
+      return false;
+    }
+    for (auto& instruction : convert_result_instructions) {
+      appendLineToEpilogue(instruction);
+    }
+    appendLineToEpilogue("return " + new_name);
+  } else {
+    appendLineToEpilogue("return input;");
   }
-  // Append return instruction.
-  SmallVector<Value> results;
-  getResults(func, results);
-  // Only support one result currently.
-  // TODO: support more outputs.
-  if (results.size() != 1) {
-    return false;
-  }
-  Value result = results[0];
-  std::string old_name = binding[result];
-  std::string new_name;
-  SmallVector<std::string> convert_result_instructions;
-  if (!mayConvertCUDATypeToCutlassType(result, old_name, new_name,
-                                       convert_result_instructions)) {
-    return false;
-  }
-  for (auto& instruction : convert_result_instructions) {
-    appendLineToEpilogue(instruction);
-  }
-  appendLineToEpilogue("return " + new_name);
 
-  // Create source code op containing the source code string.
-  SmallVector<Value> operands;
-  getEffectiveOperands(func, operands);
+  SmallVector<int> param_permute;
+  if (gemms.size() == 1) {
+    param_permute.resize(3);
+    for (auto operand : llvm::enumerate(operands)) {
+      if (A == operand.value()) {
+        param_permute[0] = operand.index();
+      } else if (B == operand.value()) {
+        param_permute[1] = operand.index();
+      }
+    }
+    param_permute[2] = 2;
+  } else {
+    SmallVector<Value> operands_and_results = operands;
+    operands_and_results.insert(operands_and_results.end(), results.begin(),
+                                results.end());
+    for (auto gemm : gemms) {
+      auto lhs = gemm->getOperand(0);
+      auto lhs_iter = llvm::find(operands_and_results, lhs);
+      if (lhs_iter == operands_and_results.end()) {
+        return false;
+      }
+      param_permute.push_back(lhs_iter - operands_and_results.begin());
 
-  int param_permute[3];
-  for (auto operand : llvm::enumerate(operands)) {
-    if (A == operand.value()) {
-      param_permute[0] = operand.index();
-    } else if (B == operand.value()) {
-      param_permute[1] = operand.index();
+      auto rhs = gemm->getOperand(1);
+      auto rhs_iter = llvm::find(operands_and_results, rhs);
+      if (rhs_iter == operands_and_results.end()) {
+        return false;
+      }
+      param_permute.push_back(rhs_iter - operands_and_results.begin());
+
+      auto out = gemm->getOperand(2);
+      auto out_iter = llvm::find(operands_and_results, out);
+      if (out_iter == operands_and_results.end()) {
+        return false;
+      }
+      param_permute.push_back(out_iter - operands_and_results.begin());
     }
   }
-  // TODO: identify the permutation if there are multiple results.
-  param_permute[2] = 2;
-  std::string parameter_permute = "{" + std::to_string(param_permute[0]) +
-                                  ", " + std::to_string(param_permute[1]) +
-                                  ", " + std::to_string(param_permute[2]) + "}";
+  std::string parameter_permute = "{";
+  for (int i = 0; i < param_permute.size(); i++) {
+    parameter_permute += std::to_string(param_permute[i]);
+    parameter_permute += (i == param_permute.size() - 1 ? "}" : ",");
+  }
 
   // Replace newly generated code in the template.
   std::unordered_map<std::string, std::string> codeToReplace = {
       {kSpecializedClassName, specialized_class_name},
       {kSpecializedEpilogue, specialized_epilogue},
       {kEpilogueIsHeavy, epilogue_is_heavy},
+      {kGNum, gemm_num},
       {kGRank, gemm_rank},
       {kElementAType, element_a_type},
       {kElementALayout, element_a_layout},

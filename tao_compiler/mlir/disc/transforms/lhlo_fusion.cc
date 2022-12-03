@@ -726,6 +726,8 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
       if (gpu_enabled_) {
         if (isCompIntensFusionEnabled()) {
           pipeline.emplace_back(
+              makeNewPlacementAwareFusionStrategy(gpu_enabled_, "dot_hmerge"));
+          pipeline.emplace_back(
               makeNewPlacementAwareFusionStrategy(gpu_enabled_, "pre_dot"));
           pipeline.emplace_back(
               makeNewPlacementAwareFusionStrategy(gpu_enabled_, "dot"));
