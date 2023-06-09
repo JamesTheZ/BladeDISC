@@ -361,10 +361,14 @@ transform_dialect::LowerConditionalGenericOp buildLowerConditionalGenericOp(
 }
 
 transform_dialect::DISCPromoteDotOperandsOp buildPromoteDotOperandsOp(
-    OpBuilder& b, Location& loc, Value target, ArrayRef<int64_t> indices) {
-  SmallVector<Type> pdlTypes(3, pdl::OperationType::get(b.getContext()));
-  return b.create<transform_dialect::DISCPromoteDotOperandsOp>(loc, pdlTypes,
-                                                               target, indices);
+    OpBuilder& b, Location& loc, Value target, ArrayRef<int64_t> indices,
+    ArrayRef<Attribute> memorySpaces) {
+  // SmallVector<Type> pdlTypes(3, pdl::OperationType::get(b.getContext()));
+  auto indicesAttr = b.getDenseI64ArrayAttr(indices);
+  auto memorySpacesAttr = b.getArrayAttr(memorySpaces);
+  return b.create<transform_dialect::DISCPromoteDotOperandsOp>(
+      loc,  // pdlTypes,
+      target, indicesAttr, memorySpacesAttr);
 }
 
 transform_dialect::DISCSplitReductionSerialOp buildSplitReductionSerialOp(
@@ -1586,8 +1590,14 @@ LogicalResult CUDAMMAGEMMDefaultScheduleFactory::assignSchedule(
 
   // Promote operands for shared memory buffering.
   // TODO: promote operands for register buffering.
-  auto promoteDotOperandsOp =
-      buildPromoteDotOperandsOp(b, loc, splitMatmulBlock, {0, 1});
+  auto workgroupAddressSpaceAttr = gpu::AddressSpaceAttr::get(
+      ctx, gpu::GPUDialect::getWorkgroupAddressSpace());
+  auto privateAddressSpaceAttr = gpu::AddressSpaceAttr::get(
+      ctx, gpu::GPUDialect::getPrivateAddressSpace());
+  auto promoteDotOperandsOp = buildPromoteDotOperandsOp(
+      b, loc, splitMatmulBlock, {0, 1, 2},
+      {workgroupAddressSpaceAttr, workgroupAddressSpaceAttr,
+       privateAddressSpaceAttr});
   auto promotedMatmul = promoteDotOperandsOp->getResult(0);
 
   // TODO: software pipelining on k iteration.

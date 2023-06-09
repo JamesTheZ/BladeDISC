@@ -112,11 +112,24 @@ LogicalResult comprehensiveBufferizeCopyFn(OpBuilder& builder, Location loc,
 static FailureOr<Value> gpuComprehensiveBufferizeAllocationFn(
     OpBuilder& builder, Location loc, MemRefType memRefType,
     ValueRange dynamicSizes, unsigned alignment) {
-  auto addressSpaceAttr = gpu::AddressSpaceAttr::get(
-      builder.getContext(), gpu::GPUDialect::getWorkgroupAddressSpace());
+  // auto addressSpaceAttr = gpu::AddressSpaceAttr::get(
+  // builder.getContext(), gpu::GPUDialect::getWorkgroupAddressSpace());
+  auto addressSpaceAttr = memRefType.getMemorySpace();
+  if (addressSpaceAttr != gpu::AddressSpaceAttr::get(
+                              builder.getContext(),
+                              gpu::GPUDialect::getWorkgroupAddressSpace()) &&
+      addressSpaceAttr != gpu::AddressSpaceAttr::get(
+                              builder.getContext(),
+                              gpu::GPUDialect::getPrivateAddressSpace())) {
+    return failure();
+  }
   MemRefType allocType =
       MemRefType::get(memRefType.getShape(), memRefType.getElementType(),
                       AffineMap(), addressSpaceAttr);
+#if 1
+  llvm::errs() << "[ZZ] memreftype space: " << memRefType.getMemorySpace()
+               << "\n";
+#endif
   return builder
       .create<memref::AllocOp>(loc, allocType, dynamicSizes,
                                builder.getI64IntegerAttr(alignment))
@@ -3592,11 +3605,20 @@ transform_dialect::DISCPromoteDotOperandsOp::applyToOne(
   OpBuilder::InsertionGuard g(rewriter);
   rewriter.setInsertionPoint(target);
   SmallVector<int64_t> indices = llvm::to_vector(getIndices());
+  SmallVector<Attribute> memorySpaces = llvm::to_vector(getMemorySpaces());
+  if (indices.size() != memorySpaces.size()) {
+    return emitDefaultDefiniteFailure(target)
+           << "failed to promote operand, as the number of memory spaces does "
+              "not match that of indices";
+  }
   int64_t numOperands = target->getNumOperands();
 
   results.push_back(target);
   bufferization::BufferizationOptions options;
-  for (int64_t index : indices) {
+  for (auto iter : llvm::enumerate(llvm::zip(indices, memorySpaces))) {
+    int i = iter.index();
+    auto index = std::get<0>(iter.value());
+    auto space = std::get<1>(iter.value());
     if ((index >= 0) && (index < numOperands)) {
       FailureOr<Value> ret = bufferization::allocateTensorForShapedValue(
           rewriter, loc, target->getOperand(index), false, options, true);
@@ -3604,6 +3626,13 @@ transform_dialect::DISCPromoteDotOperandsOp::applyToOne(
         return emitDefaultDefiniteFailure(target)
                << "failed to promote operand";
       }
+
+      auto alloc = ret.value().getDefiningOp<bufferization::AllocTensorOp>();
+      if (!alloc) {
+        return emitDefaultDefiniteFailure(target) << "AlloctensorOp required";
+      }
+      alloc.setMemorySpaceAttr(space);
+
       target->setOperand(index, ret.value());
       results.push_back(ret.value().getDefiningOp());
     } else {
@@ -3611,6 +3640,20 @@ transform_dialect::DISCPromoteDotOperandsOp::applyToOne(
     }
   }
   return DiagnosedSilenceableFailure::success();
+}
+
+void DISCPromoteDotOperandsOp::build(OpBuilder& builder, OperationState& result,
+                                     Value target, DenseI64ArrayAttr indices,
+                                     ArrayAttr memorySpaces) {
+  MLIRContext* ctx = builder.getContext();
+  result.addOperands(target);
+  result.addAttribute(DISCPromoteDotOperandsOp::getIndicesAttrName(result.name),
+                      indices);
+  result.addAttribute(
+      DISCPromoteDotOperandsOp::getMemorySpacesAttrName(result.name),
+      memorySpaces);
+  SmallVector<Type> resultTypes(indices.size(), pdl::OperationType::get(ctx));
+  result.addTypes(resultTypes);
 }
 
 //===----------------------------------------------------------------------===//

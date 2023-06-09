@@ -1159,14 +1159,22 @@ def DISCPromoteDotOperandsOp :
   }];
 
   let arguments = (ins PDL_Operation:$target,
-                   DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$indices);
+                   DenseI64ArrayAttr:$indices,
+                   ArrayAttr:$memory_spaces);
   let results = (outs PDL_Operation:$promoted_dot,
-                      PDL_Operation:$lhs_alloc,
-                      PDL_Operation:$rhs_alloc);
+                      Variadic<PDL_Operation>:$allocs);
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$target,
+                   "::mlir::DenseI64ArrayAttr":$indices,
+                   "::mlir::ArrayAttr":$memory_spaces)>
+  ];
 
   let assemblyFormat = [{
     $target
     $indices
+    $memory_spaces
     attr-dict
     `:` functional-type(operands, results)
   }];
